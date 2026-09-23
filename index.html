@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>WorldWatch</title>
+  <meta name="description" content="WorldWatch — konsola obserwacyjna do geopolitycznego RPG">
+  <meta name="theme-color" content="#0a0e13">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="vendor/icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="WorldWatch">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌍</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Playfair+Display:wght@700;900&family=Oswald:wght@500;700&family=Old+Standard+TT:wght@400;700&family=UnifrakturMaguntia&family=Source+Serif+4:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="vendor/leaflet.css">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="vendor/leaflet.js"></script>
+  <script src="vendor/topojson-client.min.js"></script>
+  <script src="vendor/polygon-clipping.umd.min.js"></script>
+  <script src="vendor/html2canvas.min.js" defer></script>
+</head>
+<body>
+  <div id="login" hidden></div>
+  <div id="app" hidden></div>
+  <datalist id="dl-places"></datalist>
+  <datalist id="dl-presets"></datalist>
+  <div id="toasts" aria-live="polite"></div>
+  <noscript>WorldWatch wymaga JavaScriptu.</noscript>
+  <script type="module">
+    import { COUNTRY_PRESETS } from './js/places.js';
+    document.getElementById('dl-presets').innerHTML = COUNTRY_PRESETS.map(p => `<option value="${p.name} (${p.c})">${p.pl}</option>`).join('');
+  </script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
