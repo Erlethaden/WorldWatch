@@ -32,7 +32,21 @@
   <noscript>WorldWatch wymaga JavaScriptu.</noscript>
   <script type="module">
     import { COUNTRY_PRESETS } from './js/places.js';
-    document.getElementById('dl-presets').innerHTML = COUNTRY_PRESETS.map(p => `<option value="${p.name} (${p.c})">${p.pl}</option>`).join('');
+    document.getElementById('dl-presets').innerHTML = COUNTRY_PRESETS.map(p => `<option value="${p.pl} (${p.c})">${p.name}</option>`).join('');
+  </script>
+  <script>
+    // Strażnik startu: pokazuje błędy zamiast pustego ekranu (np. brakujący plik po wgraniu na GitHuba)
+    (function () {
+      function show(msg) {
+        var b = document.getElementById('boot-err');
+        if (!b) { b = document.createElement('div'); b.id = 'boot-err'; b.style.cssText = 'position:fixed;left:8px;right:8px;bottom:8px;z-index:9999;background:#2a0f0f;border:1px solid #ff4545;color:#ffd0d0;padding:10px 12px;border-radius:8px;font:13px/1.4 monospace;white-space:pre-wrap;max-height:40vh;overflow:auto'; document.body.appendChild(b); }
+        b.textContent += (b.textContent ? '\n' : '⚠️ WorldWatch — błąd:\n') + msg;
+      }
+      window.addEventListener('error', function (e) { if (e.target && e.target !== window && /^(SCRIPT|LINK)$/.test(e.target.tagName)) show('Nie wczytano pliku: ' + (e.target.src || e.target.href)); else if (!e.target || e.target === window || !e.target.tagName) show((e.message || 'błąd') + (e.filename ? '  [' + e.filename.split('/').slice(-2).join('/') + ':' + e.lineno + ']' : '')); }, true);
+      window.addEventListener('unhandledrejection', function (e) { show(String(e.reason && e.reason.message || e.reason)); });
+      if (location.protocol === 'file:') show('Otwierasz plik z dysku (file://). Moduły JS wymagają serwera — wgraj na GitHub Pages albo uruchom „python -m http.server”.');
+      setTimeout(function () { if (document.getElementById('app').hidden && document.getElementById('login').hidden) show('Aplikacja nie wystartowała w 10 s. Sprawdź, czy wgrałeś wszystkie pliki (js/, css/, vendor/) i odśwież z Ctrl+Shift+R.'); }, 10000);
+    })();
   </script>
   <script type="module" src="js/app.js"></script>
 </body>

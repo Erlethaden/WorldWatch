@@ -1,14 +1,15 @@
 // WORLDWATCH — start aplikacji, logowanie, układ, zegar, karta obiektu, powiadomienia
 import { initBackend, DB, AUTH, isDemo, now } from './db.js';
-import { ADMIN_UIDS } from './firebase-config.js';
-import { S, emit, onChange, startSubscriptions, stopAll, realGM, role, myCountry, persp, gmView, gameNow, turn, unitViews, statusOf, posOf, speedKmh, feedItems,
+import { ADMIN_UIDS } from './db.js';
+import { S, emit, onChange, startSubscriptions, stopAll, realGM, role, myCountry, persp, gmView, gameNow, turn, unitViews, statusOf, statusChip, tr, posOf, speedKmh, feedItems,
   cFlag, cName, flagOf, countriesSorted, allPlaces, placeLabel, parsePlace, nearestPlace, charName, setToast, run, G, createBackup, cleanupLogs, KINDS } from './store.js';
-import { h, $, $$, esc, toast, modal, form, hooks, confirmBox, kv } from './ui.js';
+import { h, $, $$, esc, toast, modal, form, hooks, confirmBox, kv, searchable } from './ui.js';
 import { initMap, render as renderMap, select, selectedKey, LAYERS, isOn, toggleLayer, pickOnMap, flyTo, colorOf } from './map.js';
 import * as U from './units.js';
 import { PANELS, openNews } from './panels.js';
 import { autoClean } from './gm.js';
 import { seedWorld } from './seed.js';
+import './images.js';
 
 setToast(toast);
 hooks.pickOnMap = pickOnMap; hooks.parsePlace = parsePlace;
@@ -44,7 +45,7 @@ async function onAuth(u) {
   });
 }
 
-const DEMO_WHO = [['demo-admin', 'Admin (Ty)', 'admin', null], ['demo-gm', 'Game Master', 'gm', null], ['demo-se', 'Gracz — Szwecja', 'leader', 'se'], ['demo-pl', 'Gracz — Polska', 'leader', 'pl'], ['demo-us', 'Gracz — USA', 'leader', 'us'], ['demo-cn', 'Gracz — Chiny', 'leader', 'cn'], ['demo-obs', 'Obserwator', 'observer', null]];
+const DEMO_WHO = [['demo-admin', 'Admin (Ty)', 'admin', null], ['demo-gm', 'Mistrz Gry (GM)', 'gm', null], ['demo-se', 'Gracz — Szwecja', 'leader', 'se'], ['demo-pl', 'Gracz — Polska', 'leader', 'pl'], ['demo-us', 'Gracz — USA', 'leader', 'us'], ['demo-cn', 'Gracz — Chiny', 'leader', 'cn'], ['demo-obs', 'Obserwator', 'observer', null]];
 async function ensureDemoUser(u) {
   const ops = [];
   for (const [uid, name, role, c] of DEMO_WHO) if (!(await DB.get('users/' + uid))) ops.push({ t: 'set', path: 'users/' + uid, data: { displayName: name, email: '', role, countryId: c, createdAt: Date.now(), lastSeen: uid === u.uid ? Date.now() : 0 } });
@@ -61,7 +62,7 @@ function showLogin() {
   if (isDemo) {
     const who = DEMO_WHO;
     box.replaceChildren(h('div.login-card',
-      h('h1.brand', '🌍 WORLDWATCH'), h('p.tag', 'Geopolitical observation console'),
+      h('h1.brand', '🌍 WORLDWATCH'), h('p.tag', 'Konsola obserwacji geopolitycznej'),
       h('div.demo-note', h('b', 'TRYB DEMO'), ' — brak konfiguracji Firebase. Dane zapisują się tylko w tej przeglądarce. Otwórz drugą kartę jako inny gracz, żeby zobaczyć różnice w widoczności.'),
       h('div.who', who.map(([uid, name, r, c]) => h('button.btn.who-btn', { onclick: () => AUTH.demoLogin({ uid, name, email: '', role: r, countryId: c }) }, c ? h('span.flag', flagOf(c)) : h('span.flag', r === 'admin' ? '🛡️' : r === 'gm' ? '🎲' : '👁️'), name))),
       h('button.btn.link', { onclick: async () => { if (await confirmBox('Wyczyścić lokalny świat demo i zacząć od nowa?', { danger: true })) { DB.wipe(); location.reload(); } } }, 'Resetuj świat demo')));
@@ -73,7 +74,7 @@ function showLogin() {
   const err = h('div.form-err');
   const wrapE = f => async () => { err.textContent = ''; try { await f(); } catch (e) { err.textContent = plErr(e); } };
   box.replaceChildren(h('div.login-card',
-    h('h1.brand', '🌍 WORLDWATCH'), h('p.tag', 'Geopolitical observation console'),
+    h('h1.brand', '🌍 WORLDWATCH'), h('p.tag', 'Konsola obserwacji geopolitycznej'),
     h('button.btn.primary.wide', { onclick: wrapE(() => AUTH.google()) }, 'Zaloguj przez Google'),
     h('div.or', 'albo'),
     h('div.login-form', email, pass,
@@ -152,7 +153,7 @@ function buildShell() {
   renderTabs(); refreshAll();
 }
 const tabList = () => [
-  { k: 'feed', i: '📰', l: 'Feed' }, { k: 'country', i: '🏛️', l: myCountry() || gmView() ? 'Kraj' : 'Państwa' },
+  { k: 'feed', i: '📰', l: 'Aktualności' }, { k: 'country', i: '🏛️', l: myCountry() || gmView() ? 'Kraj' : 'Państwa' },
   ...(myCountry() || realGM() ? [{ k: 'diplo', i: '🤝', l: 'Dyplomacja' }, { k: 'intel', i: '📡', l: 'Wywiad' }] : []),
   { k: 'chron', i: '📜', l: 'Kronika' }, ...(realGM() ? [{ k: 'gm', i: '⚙️', l: 'GM' }] : [])];
 function setTab(k) {
@@ -178,6 +179,7 @@ function renderPanel(force) {
   if (!force && focusId && P.noRefreshWhileTyping) return;
   const st = panel.scrollTop;
   panel.replaceChildren(P.render());
+  $$('.country-picker > select', panel).forEach(sel => { const ph = document.createComment(''); sel.replaceWith(ph); ph.replaceWith(searchable(sel, 8)); });
   $$('[data-keep]', panel).forEach(el => { if (keep[el.dataset.keep] != null) el.value = keep[el.dataset.keep]; if (el.dataset.keep === focusId) { el.focus(); try { sel && el.setSelectionRange(...sel); } catch { } } });
   if (!force) panel.scrollTop = st;
 }
@@ -187,7 +189,7 @@ function refreshAll() {
   const ps = $('#persp');
   if (ps) { const val = S.persp || 'gm'; ps.replaceChildren(h('option', { value: 'gm' }, '🎲 Widok GM (pełny)'), ...countriesSorted().map(c => h('option', { value: c.id }, `👁 jako ${c.flag} ${c.name}`)), h('option', { value: '__obs' }, '👁 jako obserwator')); ps.value = val; }
   const me = $('#me'), C = myCountry();
-  me.replaceChildren(...[h('span.role.' + role(), role() === 'admin' ? 'ADMIN' : role() === 'gm' ? 'GM' : role() === 'leader' ? 'LEADER' : 'OBSERVER'), C ? h('span.mycountry', `${cFlag(C)} ${cName(C)}`) : null].filter(Boolean));
+  me.replaceChildren(...[h('span.role.' + role(), role() === 'admin' ? 'ADMIN' : role() === 'gm' ? 'GM' : role() === 'leader' ? 'PRZYWÓDCA' : 'OBSERWATOR'), C ? h('span.mycountry', `${cFlag(C)} ${cName(C)}`) : null].filter(Boolean));
   $('#fab').hidden = !(realGM() || C);
   $('#layerbar').replaceChildren(...LAYERS.map(l => h('button.layer' + (isOn(l.k) ? '.on' : ''), { onclick: () => { toggleLayer(l.k); refreshAll(); }, title: l.l }, l.i, h('span', l.l))));
   const dl = $('#dl-places'); if (dl && (dl.childElementCount < 10 || S._plc !== Object.keys(S.data.countries).length)) { S._plc = Object.keys(S.data.countries).length; dl.replaceChildren(...allPlaces().map(p => h('option', { value: placeLabel(p) }))); }
@@ -212,8 +214,8 @@ export async function clockModal() {
     const g = gameNow();
     await run('CLOCK', label, w => w.set('meta/clock', { running: c.running !== false, rate: c.rate || 1, ...patch, anchorGame: patch.anchorGame ?? g, anchorReal: now() }));
   };
-  const presets = [[1, 'REAL TIME ×1'], [10, '1 min = 10 min'], [60, '1 min = 1 h'], [7, '1 dzień = 1 tydzień'], [30, '1 dzień = 1 miesiąc'], [1440, '1 min = 1 dzień']];
-  const m = modal('⏱️ Game Clock', h('div.clock-modal',
+  const presets = [[1, 'Czas rzeczywisty ×1'], [10, '1 min = 10 min'], [60, '1 min = 1 h'], [7, '1 dzień = 1 tydzień'], [30, '1 dzień = 1 miesiąc'], [1440, '1 min = 1 dzień']];
+  const m = modal('⏱️ Zegar gry', h('div.clock-modal',
     h('div.big-clock', G.fmtDT(gameNow()) + ' UTC'),
     h('div.btn-row', c.running !== false ? h('button.btn', { onclick: () => { set({ running: false }, 'PAUSE'); m.close(); } }, '❚❚ Zatrzymaj czas') : h('button.btn.primary', { onclick: () => { set({ running: true }, 'RESUME'); m.close(); } }, '▶ Wznów czas')),
     h('div.form-section', 'Tempo'),
@@ -268,17 +270,17 @@ const code = n => (n || '?').replace(/[^A-Za-zÀ-ž ]/g, '').trim().slice(0, 3).
 function updateCardDyn() {
   const v = cardView, box = $('#unitcard'); if (!v || !box || box.hidden) return;
   const t = gameNow(), p = posOf(v, t), set = (k, val) => { const e = box.querySelector(`[data-dyn="${k}"]`); if (e) e.textContent = val; };
-  const st = statusOf(v, t); const se = box.querySelector('[data-dyn="status"]'); if (se) { se.textContent = st; se.className = 'status s-' + st.split(' ')[0].toLowerCase(); }
+  const st = statusChip(v, t); const se = box.querySelector('[data-dyn="status"]'); if (se) { se.textContent = st.text; se.className = 'status ' + st.cls; }
   if (!p) return;
   const fuzzy = v.fuzzKm > 0;
   set('pos', fuzzy ? G.posRange(p.pos, v.fuzzKm) : `${p.pos.lat.toFixed(2)}°, ${p.pos.lon.toFixed(2)}°`);
   const moving = p.phase === 'moving', sp = speedKmh(v);
-  if (v.kind === 'aircraft') set('alt', moving ? (fuzzy ? '~' : '') + (v.altitude || (p.progress < 0.08 || p.progress > 0.92 ? Math.round(Math.min(p.progress, 1 - p.progress) / 0.08 * 35) * 1000 : 35000)).toLocaleString('en') + ' ft' : '0 ft');
+  if (v.kind === 'aircraft') set('alt', moving ? (fuzzy ? '~' : '') + (v.altitude || (p.progress < 0.08 || p.progress > 0.92 ? Math.round(Math.min(p.progress, 1 - p.progress) / 0.08 * 35) * 1000 : 35000)).toLocaleString('pl') + ' stóp' : '0 stóp');
   else set('alt', moving ? `${G.compass(p.heading)} (${Math.round(p.heading)}°)` : '—');
-  set('spd', moving && sp ? (v.kind === 'aircraft' ? `${Math.round(sp)} km/h` : `${(sp / 1.852).toFixed(1)} kn`) : v.kind === 'satellite' ? '27 600 km/h' : '0');
+  set('spd', moving && sp ? (v.kind === 'aircraft' ? `${Math.round(sp)} km/h` : `${(sp / 1.852).toFixed(1)} węzła`) : v.kind === 'satellite' ? '27 600 km/h' : '0');
   if (p.start) {
-    set('dep', `${p.phase === 'before' ? 'STD' : 'ATD'} ${G.fmtTime(p.start)}${v.delay ? ' (+' + G.fmtDur(v.delay) + ')' : ''}`);
-    set('eta', `${p.phase === 'after' ? 'ATA' : 'ETA'} ${G.fmtTime(p.end)}${p.phase === 'moving' ? ' · ' + G.fmtDur(p.end - t) : ''}`);
+    set('dep', `${p.phase === 'before' ? 'Odlot (plan)' : 'Odlot'} ${G.fmtTime(p.start)}${v.delay ? ' (+' + G.fmtDur(v.delay) + ')' : ''}`);
+    set('eta', `${p.phase === 'after' ? 'Przylot' : 'Przylot ok.'} ${G.fmtTime(p.end)}${p.phase === 'moving' ? ' · ' + G.fmtDur(p.end - t) : ''}`);
     const pct = Math.round((p.progress || 0) * 100); const b = box.querySelector('[data-dyn="bar"]'); if (b) b.style.width = pct + '%'; const pl = box.querySelector('[data-dyn="plane"]'); if (pl) pl.style.left = pct + '%';
   }
 }
@@ -287,7 +289,7 @@ function updateCardDyn() {
 function quickCreate() {
   const gm = realGM();
   const opts = [['trip', '🧭 Podróż / wizyta dyplomatyczna'], ['aircraft', '✈️ Samolot'], ['ship', '🚢 Okręt / statek'], ['submarine', '🌊 Okręt podwodny'], ['ground', '🪖 Jednostka lądowa'], ['base', '🏗️ Baza / obiekt'], ['zone', '🎯 Ćwiczenia / strefa'], ['satellite', '🛰️ Satelita'],
-    ['statement', '📢 Oświadczenie państwa'], ...(gm ? [['contact', '⚠️ Nieznany kontakt radarowy'], ['news', '🔴 Breaking news / przeciek'], ['conquest', '⚔️ Podbój terenu'], ['paper', '🗞️ Gazeta'], ['card', '🖼️ Grafika wydarzenia'], ['intel', '📡 Raport wywiadu']] : [['intel', '📝 Notatka wywiadu']])];
+    ['statement', '📢 Oświadczenie państwa'], ...(gm ? [['contact', '⚠️ Nieznany kontakt radarowy'], ['news', '🔴 Pilna wiadomość / przeciek'], ['conquest', '⚔️ Podbój terenu'], ['paper', '🗞️ Gazeta'], ['card', '🖼️ Grafika wydarzenia'], ['intel', '📡 Raport wywiadu']] : [['intel', '📝 Notatka wywiadu']])];
   const m = modal('Utwórz', h('div.create-grid', opts.map(([k, l]) => h('button.btn.create', { onclick: () => { m.close(); doCreate(k); } }, l))));
 }
 async function doCreate(k) {
@@ -301,8 +303,8 @@ async function doCreate(k) {
 // ───────── menu użytkownika ─────────
 function userMenu() {
   modal('Konto', h('div.stack',
-    kv('Użytkownik', S.me?.displayName || S.user?.name), kv('Rola', role()), myCountry() ? kv('Państwo', `${cFlag(myCountry())} ${cName(myCountry())}`) : null,
-    kv('Backend', isDemo ? 'DEMO (lokalnie)' : 'Firebase'),
+    kv('Użytkownik', S.me?.displayName || S.user?.name), kv('Rola', { admin: 'Admin', gm: 'Mistrz Gry', leader: 'Przywódca państwa', observer: 'Obserwator' }[role()] || role()), myCountry() ? kv('Państwo', `${cFlag(myCountry())} ${cName(myCountry())}`) : null,
+    kv('Dane', isDemo ? 'DEMO (lokalnie w przeglądarce)' : 'Firebase'),
     realGM() ? h('label.frow', h('span.flabel', 'Perspektywa (zobacz świat oczami gracza)'), (() => { const ps = $('#persp').cloneNode(true); ps.id = ''; ps.value = S.persp || 'gm'; ps.onchange = e => { S.persp = e.target.value; select(null); refreshAll(); }; return ps; })()) : null,
     h('button.btn', { onclick: () => AUTH.out() }, 'Wyloguj')));
 }
@@ -322,7 +324,7 @@ function checkNotifications() {
   const fresh = items.filter(i => !seen.has(i.id));
   S.unread = (S.unread || new Set()); fresh.forEach(i => S.unread.add(i.id));
   fresh.slice(0, 4).forEach(i => {
-    const txt = i.type === 'news' ? `${i.news.breaking ? '🔴 BREAKING: ' : '📰 '}${i.news.headline}` : `${i.icon} ${i.text}`;
+    const txt = i.type === 'news' ? `${i.news.breaking ? '🔴 PILNE: ' : '📰 '}${i.news.headline}` : `${i.icon} ${i.text}`;
     toast(h('span', { onclick: () => i.unitKey ? select(i.unitKey, true) : i.news ? openNews(i.news.id) : setTab(i.type === 'msg' ? 'diplo' : 'feed') }, txt), i.important || i.news?.breaking ? 'hot' : 'info', 7000);
     if ((i.important || i.news?.breaking || i.own) && 'Notification' in window && Notification.permission === 'granted' && document.hidden) new Notification('WORLDWATCH', { body: txt.replace(/\p{Extended_Pictographic}/gu, '').trim() });
   });

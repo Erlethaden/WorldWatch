@@ -51,7 +51,30 @@ export function confirmBox(msg, { ok = 'Potwierdź', danger = false } = {}) {
 }
 
 // ───────── formularze ─────────
-export const hooks = { pickOnMap: null, placeList: () => [] };
+export const hooks = { pickOnMap: null, placeList: () => [], uploadImage: null, loadImage: null };
+
+// wyszukiwanie w długich listach (bez polskich znaków i wielkości liter): „pols” znajdzie „Polska”
+export const norm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ł/g, 'l').replace(/Ł/g, 'l').toLowerCase();
+export function searchable(sel, min = 12) {
+  const all = [...sel.options];
+  if (all.length < min) return sel;
+  const q = h('input.search', { type: 'search', placeholder: '🔎 szukaj…', oninput: () => {
+    const t = norm(q.value), keep = sel.value;
+    const rank = o => { if (o.value === '' || !t) return o.value === '' ? -1 : 0; const n = norm(o.textContent).replace(/^[^a-z0-9]+/, ''); return n.startsWith(t) ? 0 : (' ' + n).includes(' ' + t) ? 1 : 2; };   // najpierw nazwy zaczynające się od frazy
+    sel.replaceChildren(...all.filter(o => !t || norm(o.textContent).includes(t) || o.value === keep || o.value === '').sort((x, y) => rank(x) - rank(y)));
+    sel.value = keep;
+    sel.size = t ? Math.min(8, Math.max(2, sel.options.length)) : 0;   // podczas szukania wyniki widać od razu jako listę
+  } });
+  sel.addEventListener('change', () => { if (sel.size) { const v = sel.value; sel.size = 0; q.value = ''; sel.replaceChildren(...all); sel.value = v; } });
+  return h('div.search-wrap', q, sel);
+}
+// obrazek: zwykły link albo „img:ID” (plik wgrany z komputera, trzymany w bazie)
+export function img(ref, cls = '', attrs = {}) {
+  const el = h('img' + cls, { alt: '', ...attrs });
+  if (!ref) return el;
+  if (ref.startsWith('img:') && hooks.loadImage) hooks.loadImage(ref).then(src => { if (src) el.src = src; }); else el.src = ref;
+  return el;
+}
 const opt = o => Array.isArray(o) ? o : [o, o];
 
 // fields: [{k,label,type,options,value,help,req,show:(vals)=>bool}]
@@ -71,10 +94,22 @@ export function form(title, fields, { submit = 'Zapisz', wide = false, extra } =
         case 'range': { const out = h('span.range-val', (v ?? 50) + '%'); const r = h('input', { type: 'range', min: 0, max: 100, value: v ?? 50, oninput: () => out.textContent = r.value + '%' }); el = h('div.range', r, out); get = () => +r.value; break; }
         case 'check': el = h('input', { type: 'checkbox', checked: !!v }); get = () => el.checked; break;
         case 'color': el = h('input', { type: 'color', value: v || '#3fa7ff' }); get = () => el.value; break;
-        case 'select': el = h('select', (f.options || []).map(o => { const [ov, ol] = opt(o); return h('option', { value: ov, selected: String(ov) === String(v ?? '') }, ol); })); get = () => el.value; break;
+        case 'select': { const s = h('select', (f.options || []).map(o => { const [ov, ol] = opt(o); return h('option', { value: ov, selected: String(ov) === String(v ?? '') }, ol); })); el = searchable(s); get = () => s.value; break; }
         case 'multi': {
           const boxes = (f.options || []).map(o => { const [ov, ol] = opt(o); const c = h('input', { type: 'checkbox', value: ov, checked: (v || []).includes(ov) }); return h('label.chk', c, ' ', ol); });
-          el = h('div.multi', boxes.length ? boxes : h('span.muted', f.empty || '— brak —')); get = () => boxes.map(b => b.firstChild).filter(c => c.checked).map(c => c.value); break;
+          const box = h('div.multi', boxes.length ? boxes : h('span.muted', f.empty || '— brak —'));
+          el = boxes.length > 10 ? h('div.search-wrap', h('input.search', { type: 'search', placeholder: '🔎 szukaj…', oninput: e => { const q = norm(e.target.value); boxes.forEach(b => b.style.display = !q || norm(b.textContent).includes(q) || b.firstChild.checked ? '' : 'none'); } }), box) : box;
+          get = () => boxes.map(b => b.firstChild).filter(c => c.checked).map(c => c.value); break;
+        }
+        case 'image': {
+          const inp = h('input', { value: v || '', placeholder: 'link https://… albo plik z komputera' });
+          const prev = h('div.img-prev');
+          const show = () => { prev.replaceChildren(inp.value ? img(inp.value) : ''); };
+          const file = h('input', { type: 'file', accept: 'image/*', hidden: true, onchange: async () => { const fl = file.files[0]; if (!fl) return; up.disabled = true; up.textContent = '⏳'; try { inp.value = await hooks.uploadImage(fl); show(); } catch (e) { toast('Nie udało się wgrać obrazka: ' + e.message, 'err'); } up.disabled = false; up.textContent = '📁 Z komputera'; file.value = ''; } });
+          const up = h('button.btn.sm', { type: 'button', onclick: () => file.click() }, '📁 Z komputera');
+          inp.addEventListener('change', show);
+          el = h('div.img-field', h('div.place', inp, up, h('button.btn.sm', { type: 'button', title: 'Usuń obrazek', onclick: () => { inp.value = ''; show(); } }, '✕')), file, prev); show();
+          get = () => inp.value.trim(); break;
         }
         case 'datetime': { const now = f.now?.() ?? Date.now(); el = h('div.dt', h('input', { type: 'datetime-local', value: G.toLocalInput(v ?? now) }), h('button.btn.sm', { type: 'button', onclick: () => el.firstChild.value = G.toLocalInput(f.now?.() ?? Date.now()) }, 'teraz'), h('span.muted', ' UTC (czas gry)')); get = () => G.fromLocalInput(el.firstChild.value); break; }
         case 'duration': el = h('input', { value: v != null && v !== '' ? G.fmtDur(v) : '', placeholder: f.ph || 'np. 1h 35m · puste = auto' }); get = () => G.parseDur(el.value); break;

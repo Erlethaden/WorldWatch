@@ -96,10 +96,10 @@ export function posRange(p, km) {
   const f = (a, b, pos, neg) => `${Math.abs(a).toFixed(1)}–${Math.abs(b).toFixed(1)} ${a >= 0 ? pos : neg}`;
   return `${f(p.lat - dLat, p.lat + dLat, 'N', 'S')} · ${f(p.lon - dLon, p.lon + dLon, 'E', 'W')}`;
 }
-export function compass(deg) { return ['North', 'North-East', 'East', 'South-East', 'South', 'South-West', 'West', 'North-West'][Math.round(((deg % 360) + 360) % 360 / 45) % 8]; }
+export function compass(deg) { return ['Północ', 'Północny wschód', 'Wschód', 'Południowy wschód', 'Południe', 'Południowy zachód', 'Zachód', 'Północny zachód'][Math.round(((deg % 360) + 360) % 360 / 45) % 8]; }
 
 // ── czas ──
-const MON = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+const MON = ['STY', 'LUT', 'MAR', 'KWI', 'MAJ', 'CZE', 'LIP', 'SIE', 'WRZ', 'PAŹ', 'LIS', 'GRU'];
 const p2 = n => String(n).padStart(2, '0');
 export function fmtTime(ms) { if (!isFinite(ms)) return '—'; const d = new Date(ms); return `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`; }
 export function fmtDate(ms) { if (!isFinite(ms)) return '—'; const d = new Date(ms); return `${p2(d.getUTCDate())} ${MON[d.getUTCMonth()]} ${d.getUTCFullYear()}`; }

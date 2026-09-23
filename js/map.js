@@ -1,15 +1,15 @@
 // Mapa świata (Leaflet): warstwy, markery ruchome, trasy, strefy, linie sojuszy, niepewność pozycji
 import { S, unitViews, posOf, gameNow, cColor, cFlag, cName, country, persp, gmView, KINDS, ZONE_TYPES, REL_COLOR, charView, charLocation, statusOf, G, myCountry, realGM } from './store.js';
-import { h, esc } from './ui.js';
-import { CARTO_KEY } from './firebase-config.js';
+import { h, esc, toast } from './ui.js';
+import { CARTO_KEY } from './db.js';
 import { COUNTRY_PRESETS, CITIES } from './places.js';
-import { flagOf } from './store.js';
+import { flagOf, tr as trl } from './store.js';
 
 export const LAYERS = [
-  { k: 'aircraft', i: '✈️', l: 'Aircraft' }, { k: 'naval', i: '🚢', l: 'Naval' }, { k: 'military', i: '🪖', l: 'Military' },
-  { k: 'diplomacy', i: '🏛️', l: 'Diplomacy' }, { k: 'news', i: '📰', l: 'News' }, { k: 'satellites', i: '🛰️', l: 'Satellites' },
-  { k: 'intel', i: '📡', l: 'Intelligence' }, { k: 'trade', i: '💰', l: 'Trade' }, { k: 'alliances', i: '🤝', l: 'Alliances' },
-  { k: 'conflicts', i: '⚠️', l: 'Conflicts' }, { k: 'exercises', i: '🎯', l: 'Exercises' }
+  { k: 'aircraft', i: '✈️', l: 'Lotnictwo' }, { k: 'naval', i: '🚢', l: 'Marynarka' }, { k: 'military', i: '🪖', l: 'Wojsko' },
+  { k: 'diplomacy', i: '🏛️', l: 'Dyplomacja' }, { k: 'news', i: '📰', l: 'Wiadomości' }, { k: 'satellites', i: '🛰️', l: 'Satelity' },
+  { k: 'intel', i: '📡', l: 'Wywiad' }, { k: 'trade', i: '💰', l: 'Handel' }, { k: 'alliances', i: '🤝', l: 'Sojusze' },
+  { k: 'conflicts', i: '⚠️', l: 'Konflikty' }, { k: 'exercises', i: '🎯', l: 'Ćwiczenia' }
 ];
 let enabled = new Set(LAYERS.map(l => l.k).filter(k => k !== 'trade'));
 try { const s = JSON.parse(localStorage.getItem('ww_layers') || 'null'); if (Array.isArray(s)) enabled = new Set(s); } catch { }
@@ -62,7 +62,7 @@ export function initMap(el, { onSelectUnit, onCountryClick }) {
   map.createPane('lines').style.zIndex = 390;
   ['countries', 'static', 'lines', 'units', 'fuzz'].forEach(k => groups[k] = L.layerGroup().addTo(map));
   selLayer = L.layerGroup().addTo(map);
-  fetch('vendor/countries-50m.json').then(r => r.json()).then(topo => {
+  fetch('vendor/countries-50m.json').then(r => { if (!r.ok) throw new Error(`vendor/countries-50m.json → HTTP ${r.status} (brak pliku na serwerze?)`); return r.json(); }).then(topo => {
     // wszystkie państwa i terytoria świata (241); brakujące/zdublowane ID zastępujemy stałym kluczem z nazwy
     const fc = topojson.feature(topo, topo.objects.countries), seen = new Set();
     fc.features.forEach(f => { let id = f.id ?? 'x-' + f.properties.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'); if (seen.has(id)) id += '-' + f.properties.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'); seen.add(id); f.id = id;
@@ -73,7 +73,7 @@ export function initMap(el, { onSelectUnit, onCountryClick }) {
     });
     if (!CARTO_KEY) L.geoJSON(fc, { pane: 'land', renderer: L.canvas({ pane: 'land', padding: 0.5 }), interactive: false, style: { stroke: false, fillColor: '#18222e', fillOpacity: 1 } }).addTo(map);
     geo = L.geoJSON(fc, { style: styleCountry, onEachFeature: (f, l) => l.on('click', e => { if (pickCb || drawCb) return; const t = terrByIso(f.id), c = t ? { id: t.controller } : byIsoN(f.id); if (c) { L.DomEvent.stop(e); onCountry(c.id); } }) }).addTo(groups.countries);
-  }).catch(e => console.warn('geo', e));
+  }).catch(e => { console.error('geo', e); toast('⚠️ Nie wczytano konturów mapy: ' + e.message, 'err', 20000); });
   map.on('click', e => {
     if (drawCb) return drawCb(e);
     if (pickCb) { const cb = pickCb; pickCb = null; el.classList.remove('picking'); cb({ lat: e.latlng.lat, lon: ((e.latlng.lng + 540) % 360) - 180 }); return; }
@@ -90,7 +90,7 @@ export const TERR_STATUS = { occupied: 'okupowane', annexed: 'zaanektowane', con
 const terrByIso = n => Object.values(S.data.territories).find(t => t.kind === 'country' && String(t.isoN) === String(n));
 const terrStyle = t => { const col = cColor(t.controller); return { color: t.status === 'contested' ? '#ff4545' : col, weight: 1.6, opacity: 0.95, dashArray: t.status === 'annexed' ? null : '6 4', fillColor: col, fillOpacity: t.status === 'annexed' ? 0.24 : 0.16 }; };
 // państwa spoza gry (NPC) istnieją na mapie, można je zająć, ale nie mają statystyk
-export const npcOf = isoN => { const p = COUNTRY_PRESETS.find(x => x.n === String(isoN).padStart(3, '0')); return p ? { name: p.name, flag: flagOf(p.c) } : null; };
+export const npcOf = isoN => { const p = COUNTRY_PRESETS.find(x => x.n === String(isoN).padStart(3, '0')); return p ? { name: p.pl || p.name, flag: flagOf(p.c) } : null; };
 export const prevLabel = t => t.previous ? `${cFlag(t.previous)} ${cName(t.previous)}` : t.previousName || '';
 const terrTip = t => `${cFlag(t.controller)} <b>${esc(cName(t.controller))}</b> — ${TERR_STATUS[t.status] || t.status}<br>${esc(t.label || '')}${prevLabel(t) ? `<br><small>wcześniej: ${esc(prevLabel(t))}</small>` : ''}`;
 // część kraju: narysowany obszar przycięty do granic tego kraju (polygon-clipping)
@@ -102,12 +102,22 @@ export function clipToCountry(points, isoN) {
   const ring = points.map(p => [p.lon, p.lat]); ring.push(ring[0]);
   try { return polygonClipping.intersection([ring], target); } catch (e) { console.warn('clip', e); return null; }
 }
+// kształt obszaru: nowy format = MultiPolygon [lon,lat] zapisany jako JSON w t.geo (już przycięty); stary = t.points (+ clipIso)
+export function areaGeo(t) {
+  if (t.geo) { try { return JSON.parse(t.geo); } catch { return []; } }
+  if (!t.points?.length) return [];
+  if (t.clipIso) return clipToCountry(t.points, t.clipIso) || [[t.points.map(p => [p.lon, p.lat])]];
+  return [[t.points.map(p => [p.lon, p.lat])]];
+}
 function areaShape(t) {
-  const raw = [t.points.map(p => [p.lat, p.lon])];
-  if (!t.clipIso) return raw;
-  const key = t.id + t.clipIso + JSON.stringify(t.points);
-  if (!clipCache.has(key)) { const mp = clipToCountry(t.points, t.clipIso); if (!mp) return raw; clipCache.set(key, mp.map(poly => poly.map(r => r.map(([x, y]) => [y, x])))); }
+  const key = t.id + (t.geo || JSON.stringify(t.points) + t.clipIso);
+  if (!clipCache.has(key)) clipCache.set(key, areaGeo(t).map(poly => poly.map(r => r.map(([x, y]) => [y, x]))));
   return clipCache.get(key);
+}
+export function shapeCenter(mp) {
+  let a = 180, b = -180, c = 90, d = -90;
+  (mp || []).forEach(poly => (poly[0] || []).forEach(([x, y]) => { a = Math.min(a, x); b = Math.max(b, x); c = Math.min(c, y); d = Math.max(d, y); }));
+  return a > b ? null : { lat: +((c + d) / 2).toFixed(3), lon: +((a + b) / 2).toFixed(3) };
 }
 export function focusCountry(isoN) { const f = featureOf(isoN); if (f) map.fitBounds(f.getBounds(), { padding: [30, 30], maxZoom: 6 }); }
 export const geoNames = () => geo ? geo.getLayers().map(l => ({ isoN: String(l.feature.id), name: npcOf(l.feature.id)?.name || l.feature.properties.name })).sort((a, b) => a.name.localeCompare(b.name)) : [];
@@ -119,19 +129,62 @@ function styleCountry(f) {
   return { color: c.color || '#3fa7ff', weight: mine ? 2 : 1, opacity: mine ? 0.95 : 0.6, fillColor: c.color || '#3fa7ff', fillOpacity: mine ? 0.2 : 0.12 };
 }
 
-// rysowanie obszaru: klik = punkt, „Zakończ” = gotowe (min. 3 punkty), Esc/„Anuluj” = przerwij
+// ───────── NARZĘDZIE RYSOWANIA TERENU ─────────
+// Przytrzymaj i obrysuj teren (mysz / palec). Każdy obrys DODAJE się do obszaru, gumka ODEJMUJE.
+// Przy „części państwa” wynik jest od razu przycinany do granic kraju — widać go na żywo.
 let drawCb = null;
-export function drawArea() {
+export function drawArea({ clipIso = null, initial = null } = {}) {
+  const PC = window.polygonClipping;
   return new Promise(res => {
-    const pts = [], line = L.polygon([], { color: '#f5b301', weight: 2, dashArray: '5 5', fillOpacity: 0.1, interactive: false }).addTo(map);
-    const bar = h('div.draw-bar', h('span', '✏️ Klikaj na mapie, aby obrysować zajęty obszar · punkty: ', h('b', '0')),
-      h('button.btn.sm', { onclick: () => { pts.pop(); upd(); } }, '↶'), h('button.btn.sm', { onclick: () => done(null) }, 'Anuluj'), h('button.btn.sm.primary', { onclick: () => done(pts.length > 2 ? pts : null) }, 'Zakończ'));
-    const upd = () => { line.setLatLngs(pts.map(p => [p.lat, p.lon])); bar.querySelector('b').textContent = pts.length; };
-    const key = e => e.key === 'Escape' && done(null);
-    const done = r => { drawCb = null; line.remove(); bar.remove(); document.removeEventListener('keydown', key); res(r); };
-    drawCb = e => { pts.push({ lat: +e.latlng.lat.toFixed(3), lon: +(((e.latlng.lng + 540) % 360) - 180).toFixed(3) }); upd(); };
+    const el = map.getContainer(), f = clipIso ? featureOf(clipIso) : null;
+    const target = f ? (f.feature.geometry.type === 'Polygon' ? [f.feature.geometry.coordinates] : f.feature.geometry.coordinates) : null;
+    let shape = initial || [], mode = 'draw', drawing = false, pts = [];
+    const hist = [];
+    const guide = target ? L.geoJSON({ type: 'MultiPolygon', coordinates: target }, { interactive: false, style: { color: '#3fd0ff', weight: 2, dashArray: '6 5', fill: false } }).addTo(map) : null;
+    const prev = L.geoJSON(null, { interactive: false, style: { color: '#f5b301', weight: 2, fillColor: '#f5b301', fillOpacity: 0.3 } }).addTo(map);
+    const stroke = L.polyline([], { color: '#ffffff', weight: 2, dashArray: '4 4', interactive: false }).addTo(map);
+    const btn = (m, label, title) => h('button.btn.sm' + (m === mode ? '.primary' : ''), { title, 'data-m': m, onclick: () => setMode(m) }, label);
+    const modes = h('div.btn-row', btn('draw', '✏️ Rysuj', 'Dodawanie terenu'), btn('erase', '🧽 Gumka', 'Odejmowanie terenu'), btn('pan', '✋ Przesuń', 'Przesuwanie mapy'));
+    const info = h('span.draw-info');
+    const bar = h('div.draw-bar',
+      h('div.draw-hint', target ? 'Przytrzymaj i obrysuj zajętą część — wszystko poza granicą kraju (niebieska linia) zostanie obcięte.' : 'Przytrzymaj i obrysuj zajęty teren. Kolejne obrysy dodają teren, gumka go odejmuje.'),
+      h('div.draw-tools', modes,
+        h('div.btn-row', h('button.btn.sm', { onclick: undo, title: 'Cofnij ostatni obrys' }, '↶ Cofnij'), h('button.btn.sm', { onclick: () => { if (shape.length) { hist.push(shape); shape = []; redraw(); } } }, '🗑 Wyczyść'), info),
+        h('div.btn-row', h('button.btn.sm', { onclick: () => done(null) }, 'Anuluj'), h('button.btn.sm.primary', { onclick: () => done(shape.length ? shape : null) }, '✓ Gotowe'))));
+    function setMode(m) { mode = m; modes.querySelectorAll('button').forEach(b => b.classList.toggle('primary', b.dataset.m === m)); m === 'pan' ? map.dragging.enable() : map.dragging.disable(); el.style.cursor = m === 'pan' ? '' : 'crosshair'; }
+    function redraw() { prev.clearLayers(); if (shape.length) prev.addData({ type: 'MultiPolygon', coordinates: shape }); info.textContent = shape.length ? `obszarów: ${shape.length}` : 'nic nie zaznaczono'; }
+    function undo() { if (hist.length) { shape = hist.pop(); redraw(); } }
+    function apply(ring) {
+      const poly = [[...ring, ring[0]]];
+      try {
+        let next;
+        if (mode === 'erase') { if (!shape.length) return; next = PC.difference(shape, poly); }
+        else { next = shape.length ? PC.union(shape, poly) : [poly]; if (target) next = PC.intersection(next, target); }
+        if (mode !== 'erase' && target && !next.length) return toast('Ten obrys jest całkiem poza granicą wybranego państwa', 'info', 3000);
+        hist.push(shape); shape = next.map(p => p.map(r => r.map(([x, y]) => [+x.toFixed(3), +y.toFixed(3)]))); redraw();
+      } catch (e) { console.warn(e); toast('Nie udało się połączyć obrysu — spróbuj narysować prościej', 'err'); }
+    }
+    const add = e => { const ll = map.mouseEventToLatLng(e); pts.push(ll); stroke.addLatLng(ll); };
+    const down = e => { if (mode === 'pan' || e.button > 0 || e.target.closest('.leaflet-control')) return; drawing = true; pts = []; el.setPointerCapture?.(e.pointerId); add(e); e.preventDefault(); e.stopPropagation(); };
+    const move = e => { if (drawing) { add(e); e.preventDefault(); } };
+    const up = () => {
+      if (!drawing) return; drawing = false; stroke.setLatLngs([]);
+      if (pts.length < 3) return;
+      const simp = L.LineUtil.simplify(pts.map(ll => map.latLngToLayerPoint(ll)), 2).map(p => map.layerPointToLatLng(p));
+      if (simp.length >= 3) apply(simp.map(ll => [ll.lng, ll.lat]));
+    };
+    const key = e => { if (e.key === 'Escape') done(null); else if (e.key === 'Enter') done(shape.length ? shape : null); else if ((e.ctrlKey || e.metaKey) && e.key === 'z') undo(); };
+    function done(r) {
+      drawCb = null; [guide, prev, stroke].forEach(l => l && l.remove()); bar.remove();
+      el.removeEventListener('pointerdown', down, true); el.removeEventListener('pointermove', move, true); window.removeEventListener('pointerup', up, true);
+      document.removeEventListener('keydown', key); map.dragging.enable(); el.style.cursor = ''; el.style.touchAction = '';
+      res(r);
+    }
+    drawCb = () => { };   // blokuje zaznaczanie obiektów i krajów podczas rysowania
+    el.style.touchAction = 'none';
+    el.addEventListener('pointerdown', down, true); el.addEventListener('pointermove', move, true); window.addEventListener('pointerup', up, true);
     document.addEventListener('keydown', key);
-    map.getContainer().parentElement.append(bar);
+    el.parentElement.append(bar); setMode('draw'); redraw();
   });
 }
 // podpisy miejsc (offline): stolice od zoomu 5, duże miasta od 7 — tylko w widocznym obszarze
@@ -168,7 +221,7 @@ export function render() {
   if (!map) return;
   if (geo) { geo.setStyle(styleCountry); geo.eachLayer(l => { const t = terrByIso(l.feature.id), g = byIsoN(l.feature.id), n = npcOf(l.feature.id); if (t) l.bindTooltip(terrTip(t), { sticky: true }); else if (!g) l.bindTooltip(`${n?.flag || '🏳️'} ${esc(n?.name || l.feature.properties.name)} <small>· NPC, bez statystyk</small>`, { sticky: true }); else l.unbindTooltip(); }); }
   groups.static.clearLayers(); groups.lines.clearLayers();
-  Object.values(S.data.territories).filter(t => t.kind === 'area' && t.points?.length > 2).forEach(t =>
+  Object.values(S.data.territories).filter(t => t.kind === 'area' && (t.geo || t.points?.length > 2)).forEach(t =>
     L.polygon(areaShape(t), { ...terrStyle(t), pane: 'zones' }).bindTooltip(terrTip(t), { sticky: true }).on('click', e => { if (drawCb || pickCb) return; L.DomEvent.stop(e); onCountry(t.controller); }).addTo(groups.static));
   const t = gameNow(), views = unitViews(), keys = new Set();
   views.forEach(v => {
@@ -208,9 +261,9 @@ export function render() {
     if (!isOn(trade ? 'trade' : 'alliances')) return;
     const ps = tr.parties || [];
     for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++)
-      line(ps[i], ps[j], { color: trade ? '#f5b301' : '#3fa7ff', weight: trade ? 1.5 : 2, opacity: 0.7, dashArray: tr.secret ? '2 6' : null }, `${tr.secret ? '🔒 ' : ''}${esc(tr.name)} · ${esc(tr.type)}`);
+      line(ps[i], ps[j], { color: trade ? '#f5b301' : '#3fa7ff', weight: trade ? 1.5 : 2, opacity: 0.7, dashArray: tr.secret ? '2 6' : null }, `${tr.secret ? '🔒 ' : ''}${esc(tr.name)} · ${esc(trl('treaty', tr.type))}`);
   });
-  if (isOn('conflicts')) Object.values(S.data.relations).forEach(r => { if (r.status === 'At War' || r.status === 'Hostile') line(r.parties[0], r.parties[1], { color: REL_COLOR[r.status], weight: r.status === 'At War' ? 3 : 1.5, opacity: 0.8, dashArray: r.status === 'At War' ? '10 6' : '4 8' }, `${cFlag(r.parties[0])} ${cFlag(r.parties[1])} ${r.status}`); });
+  if (isOn('conflicts')) Object.values(S.data.relations).forEach(r => { if (r.status === 'At War' || r.status === 'Hostile') line(r.parties[0], r.parties[1], { color: REL_COLOR[r.status], weight: r.status === 'At War' ? 3 : 1.5, opacity: 0.8, dashArray: r.status === 'At War' ? '10 6' : '4 8' }, `${cFlag(r.parties[0])} ${cFlag(r.parties[1])} ${trl('relation', r.status)}`); });
 
   // dyplomaci na ziemi
   if (isOn('diplomacy')) {

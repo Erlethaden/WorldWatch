@@ -1,6 +1,6 @@
 // Stan aplikacji, subskrypcje, perspektywy widoczności, projekcje publiczne, operacje atomowe, logi, backupy
 import { DB, now, newId, isDemo } from './db.js';
-import { ADMIN_UIDS } from './firebase-config.js';
+import { ADMIN_UIDS } from './db.js';
 import * as G from './geo.js';
 import { COUNTRY_PRESETS, CITIES, SEAS } from './places.js';
 
@@ -84,7 +84,7 @@ function syncPublicStats() {
 export const flagOf = iso2 => iso2 && /^[A-Za-z]{2}$/.test(iso2) ? String.fromCodePoint(...iso2.toUpperCase().split('').map(c => 0x1F1A5 + c.charCodeAt(0))) : '🏳️';
 export const country = id => S.data.countries[id];
 export const cFlag = id => country(id)?.flag || (id ? '🏳️' : '');
-export const cName = id => country(id)?.name || (id && id !== '__gm' ? id.toUpperCase() : 'Unknown');
+export const cName = id => country(id)?.name || (id && id !== '__gm' ? id.toUpperCase() : 'nieznane');
 export const cDem = id => country(id)?.demonym || cName(id);
 export const cColor = id => country(id)?.color || '#8a93a0';
 export const countriesSorted = () => Object.values(S.data.countries).sort((a, b) => a.name.localeCompare(b.name));
@@ -112,22 +112,23 @@ export function parsePlace(str) {
 export function nearestPlace(p) {
   let best = null, bd = 1e9;
   allPlaces().forEach(q => { const d = G.distKm(p, q); if (d < bd) { bd = d; best = q; } });
-  return best ? (bd < 60 ? best.name : `${Math.round(bd)} km ${G.compass(G.bearing(best, p)).toLowerCase()} of ${best.name}`) : 'unknown area';
+  return best ? (bd < 60 ? best.name : `${Math.round(bd)} km na ${G.compass(G.bearing(best, p)).toLowerCase()} od: ${best.name}`) : 'nieznany obszar';
 }
 export function countryAtPlace(p) { return p ? ccToCountryId(p.cc) : null; }
 
 // ───────── słowniki ─────────
 export const KINDS = {
-  aircraft: { pl: 'Samolot', en: 'Aircraft', layer: 'aircraft', speed: 850 },
-  ship: { pl: 'Okręt / statek', en: 'Vessel', layer: 'naval', speed: 30 },
-  submarine: { pl: 'Okręt podwodny', en: 'Submarine', layer: 'naval', speed: 20 },
-  ground: { pl: 'Jednostka lądowa', en: 'Ground unit', layer: 'military', speed: 35 },
-  satellite: { pl: 'Satelita', en: 'Satellite', layer: 'satellites', speed: 27000 },
-  base: { pl: 'Baza / obiekt', en: 'Facility', layer: 'military', speed: 0 },
-  zone: { pl: 'Strefa (ćwiczenia/konflikt)', en: 'Zone', layer: 'exercises', speed: 0 },
-  contact: { pl: 'Nieznany kontakt', en: 'Contact', layer: 'intel', speed: 20 }
+  aircraft: { pl: 'Samolot', en: 'Samolot', layer: 'aircraft', speed: 850 },
+  ship: { pl: 'Okręt / statek', en: 'Jednostka pływająca', layer: 'naval', speed: 30 },
+  submarine: { pl: 'Okręt podwodny', en: 'Okręt podwodny', layer: 'naval', speed: 20 },
+  ground: { pl: 'Jednostka lądowa', en: 'Jednostka lądowa', layer: 'military', speed: 35 },
+  satellite: { pl: 'Satelita', en: 'Satelita', layer: 'satellites', speed: 27000 },
+  base: { pl: 'Baza / obiekt', en: 'Obiekt', layer: 'military', speed: 0 },
+  zone: { pl: 'Strefa (ćwiczenia/konflikt)', en: 'Strefa', layer: 'exercises', speed: 0 },
+  contact: { pl: 'Nieznany kontakt', en: 'Kontakt', layer: 'intel', speed: 20 }
 };
-export const VIS = { public: 'PUBLIC', limited: 'LIMITED', classified: 'CLASSIFIED', hidden: 'HIDDEN (tylko właściciel)' };
+export const VIS = { public: 'JAWNE', limited: 'OGRANICZONE', classified: 'TAJNE', hidden: 'UKRYTE (tylko właściciel)' };
+// Wartości w bazie zostają angielskimi kluczami (zgodność wstecz), a wyświetlamy je po polsku przez tr().
 export const MISSIONS = ['Diplomatic', 'Military', 'Intelligence', 'Trade', 'Personal', 'Emergency', 'Classified', 'Unknown'];
 export const CATEGORIES = ['Government', 'Military', 'Civilian', 'State-owned', 'Unknown'];
 export const RELATIONS = ['Neutral', 'Friendly', 'Partner', 'Strategic Partner', 'Ally', 'Hostile', 'At War'];
@@ -135,7 +136,22 @@ export const REL_COLOR = { Neutral: '#8a93a0', Friendly: '#7bc67b', Partner: '#4
 export const TREATY_TYPES = ['Alliance', 'Defence treaty', 'Trade agreement', 'Military agreement', 'Technology programme', 'Non-aggression pact', 'Secret agreement', 'Strategic partnership'];
 export const NEWS_CATS = ['Politics', 'Economy', 'Military', 'Diplomacy', 'Technology', 'Intelligence', 'Conflict', 'Trade', 'Science'];
 export const RELIABILITY = ['Confirmed', 'Highly reliable', 'Reliable', 'Unverified', 'Rumor', 'False information'];
-export const ZONE_TYPES = { exercise: { en: 'Military exercise', color: '#f5b301', layer: 'exercises' }, conflict: { en: 'Conflict zone', color: '#ff3b3b', layer: 'conflicts' }, exclusion: { en: 'Exclusion zone', color: '#ff8a3d', layer: 'conflicts' }, activity: { en: 'Reported activity', color: '#b18cff', layer: 'military' } };
+export const ZONE_TYPES = { exercise: { en: 'Ćwiczenia wojskowe', color: '#f5b301', layer: 'exercises' }, conflict: { en: 'Strefa konfliktu', color: '#ff3b3b', layer: 'conflicts' }, exclusion: { en: 'Strefa zamknięta', color: '#ff8a3d', layer: 'conflicts' }, activity: { en: 'Zgłoszona aktywność', color: '#b18cff', layer: 'military' } };
+const T = {
+  mission: { Diplomatic: 'Dyplomatyczna', Military: 'Wojskowa', Intelligence: 'Wywiadowcza', Trade: 'Handlowa', Personal: 'Prywatna', Emergency: 'Ratunkowa', Classified: 'Tajna', Unknown: 'Nieznana' },
+  category: { Government: 'Rządowy', Military: 'Wojskowy', Civilian: 'Cywilny', 'State-owned': 'Państwowy', Unknown: 'Nieznany' },
+  relation: { Neutral: 'Neutralne', Friendly: 'Przyjazne', Partner: 'Partnerstwo', 'Strategic Partner': 'Partnerstwo strategiczne', Ally: 'Sojusz', Hostile: 'Wrogie', 'At War': 'Wojna' },
+  treaty: { Alliance: 'Sojusz', 'Defence treaty': 'Traktat obronny', 'Trade agreement': 'Umowa handlowa', 'Military agreement': 'Umowa wojskowa', 'Technology programme': 'Program technologiczny', 'Non-aggression pact': 'Pakt o nieagresji', 'Secret agreement': 'Tajne porozumienie', 'Strategic partnership': 'Partnerstwo strategiczne' },
+  news: { Politics: 'Polityka', Economy: 'Gospodarka', Military: 'Wojsko', Diplomacy: 'Dyplomacja', Technology: 'Technologia', Intelligence: 'Wywiad', Conflict: 'Konflikt', Trade: 'Handel', Science: 'Nauka' },
+  reliability: { Confirmed: 'Potwierdzone', 'Highly reliable': 'Bardzo wiarygodne', Reliable: 'Wiarygodne', Unverified: 'Niepotwierdzone', Rumor: 'Plotka', 'False information': 'Fałszywa informacja' },
+  status: { AIRBORNE: 'W LOCIE', SCHEDULED: 'PLANOWANY', LANDED: 'WYLĄDOWAŁ', 'ON GROUND': 'NA ZIEMI', UNDERWAY: 'W DRODZE', 'IN PORT': 'W PORCIE', ARRIVED: 'NA MIEJSCU', STATIONARY: 'POSTÓJ', HOLDING: 'OCZEKUJE', DETECTED: 'WYKRYTY', 'IN ORBIT': 'NA ORBICIE', ACTIVE: 'AKTYWNA', OPERATIONAL: 'DZIAŁA', DELAYED: 'OPÓŹNIONY', DIVERTED: 'ZMIANA TRASY', RETURNING: 'POWRÓT', EMERGENCY: 'ALARM', 'LOST CONTACT': 'BRAK KONTAKTU', GROUNDED: 'UZIEMIONY', DOCKED: 'ZACUMOWANY', 'ON STATION': 'NA POZYCJI' },
+  event: { 'Diplomatic Visit': 'Wizyta dyplomatyczna', 'State Visit': 'Wizyta państwowa', 'Official Talks': 'Oficjalne rozmowy', 'Military Deployment': 'Przerzut wojsk', 'Intelligence Operation': 'Operacja wywiadowcza', 'Trade Mission': 'Misja handlowa', Transfer: 'Przelot / transfer', Emergency: 'Sytuacja awaryjna', Other: 'Inne' },
+  charStatus: { Active: 'Aktywny', Travelling: 'W podróży', 'In talks': 'W trakcie rozmów', Hospitalised: 'W szpitalu', Detained: 'Zatrzymany', Missing: 'Zaginiony', Resigned: 'Zdymisjonowany', Deceased: 'Nie żyje' },
+  risk: { Low: 'Niskie', Medium: 'Średnie', High: 'Wysokie', Extreme: 'Ekstremalne' },
+  secrecy: { Public: 'Jawny', Restricted: 'Zastrzeżony', Secret: 'Tajny' }
+};
+export const tr = (ns, k) => T[ns]?.[k] ?? k ?? '';
+export const trOpts = (ns, list) => list.map(k => [k, tr(ns, k)]);
 // Statystyki państw (jak w arkuszu GM): [sekcja, [[grupa zapisu, klucz, etykieta]]]
 export const STATS = [
   ['Polityka', [['economy', 'stability', 'Stabilność'], ['economy', 'warSupport', 'Poparcie dla wojny']]],
@@ -164,7 +180,7 @@ export function charLocation(id, t = gameNow()) {
   unitViews().forEach(v => {
     if (!(v.passengerIds || []).includes(id)) return;
     const m = G.motion(v, t); if (!m) return;
-    if (m.phase === 'moving' || m.phase === 'hold') best = { state: 'transit', pos: m.pos, unit: v, at: t, text: `Aboard ${v.label}` };
+    if (m.phase === 'moving' || m.phase === 'hold') best = { state: 'transit', pos: m.pos, unit: v, at: t, text: `Na pokładzie: ${v.label}` };
     else if (m.phase === 'after' && (!best || (best.state !== 'transit' && m.end > best.at))) { const d = v.route[v.route.length - 1]; best = { state: 'at', pos: d, at: m.end, text: d.name, unit: v }; }
   });
   if (c.locOverride && (!best || (best.state !== 'transit' && (c.locOverride.at || 0) >= (best.at || 0)))) best = { state: 'at', pos: c.locOverride, at: c.locOverride.at, text: c.locOverride.name };
@@ -173,43 +189,46 @@ export function charLocation(id, t = gameNow()) {
 }
 
 // ───────── PROJEKCJA PUBLICZNA (co widzą inni) ─────────
+const KIND_NOUN = { aircraft: 'Samolot', ship: 'Jednostka pływająca', submarine: 'Okręt podwodny', ground: 'Konwój', satellite: 'Satelita', zone: 'Strefa', base: 'Obiekt', contact: 'Kontakt' };
 export function projectUnit(sec) {
   const vis = sec.visibility || 'public';
   if (vis === 'hidden') return null;
-  const K = KINDS[sec.kind] || KINDS.aircraft, dem = cDem(sec.countryId), route = sec.route || [];
+  const K = KINDS[sec.kind] || KINDS.aircraft, cn = cName(sec.countryId), route = sec.route || [];
   const o = route[0], d = route[route.length - 1];
   const destC = countryAtPlace(d), moving = route.length > 1;
   const base = { kind: sec.kind, visibility: vis, depTime: sec.depTime || 0, duration: sec.duration || 0, delay: sec.delay || 0, holdAt: sec.holdAt || null, statusOverride: sec.statusOverride || '', updatedAt: now(), category: sec.category || '' };
   const paxNames = (sec.passengers || []).map(charName);
+  const country = { k: 'Państwo', v: `${cFlag(sec.countryId)} ${cn}` };
   if (sec.kind === 'contact') {
     const km = sec.fuzzKm || 40;
-    return { ...base, countryId: null, label: sec.callsign || 'UNKNOWN CONTACT', sub: sec.guess || 'Unidentified', route: route.map((p, i) => ({ ...G.fuzzPoint(p, km * 0.6, sec.id + 'K' + i), name: '?' })), fuzzKm: km, confidence: sec.confidence || 50,
-      lines: [{ k: 'Type', v: sec.guess || 'Unknown' }, { k: 'Confidence', v: (sec.confidence || 50) + '%' }] };
+    return { ...base, countryId: null, label: sec.callsign || 'NIEZNANY KONTAKT', sub: sec.guess || 'Niezidentyfikowany', route: route.map((p, i) => ({ ...G.fuzzPoint(p, km * 0.6, sec.id + 'K' + i), name: '?' })), fuzzKm: km, confidence: sec.confidence || 50,
+      lines: [{ k: 'Typ', v: sec.guess || 'Nieznany' }, { k: 'Pewność', v: (sec.confidence || 50) + '%' }] };
   }
   if (sec.kind === 'satellite') {
-    if (vis === 'classified') return { ...base, countryId: null, label: 'Unidentified orbital object', sub: 'Unknown', sat: sec.sat, lines: [{ k: 'Owner', v: 'Unknown' }, { k: 'Confidence', v: (sec.confidence || 60) + '%' }], confidence: sec.confidence || 60 };
-    return { ...base, countryId: sec.countryId, label: vis === 'public' ? sec.callsign : `${dem} satellite`, sub: vis === 'public' ? sec.type : 'Satellite', sat: sec.sat, lines: [{ k: 'Country', v: cName(sec.countryId) }, { k: 'Mission', v: sec.missionVisible ? sec.mission : 'Unknown' }] };
+    if (vis === 'classified') return { ...base, countryId: null, label: 'Niezidentyfikowany obiekt orbitalny', sub: 'Nieznany', sat: sec.sat, lines: [{ k: 'Właściciel', v: 'nieznany' }, { k: 'Pewność', v: (sec.confidence || 60) + '%' }], confidence: sec.confidence || 60 };
+    return { ...base, countryId: sec.countryId, label: vis === 'public' ? sec.callsign : `Satelita (${cn})`, sub: vis === 'public' ? sec.type : 'Satelita', sat: sec.sat, lines: [country, { k: 'Misja', v: sec.missionVisible ? tr('mission', sec.mission) : 'nieznana' }] };
   }
   if (sec.kind === 'zone' || sec.kind === 'base') {
     if (vis === 'classified') return null;
     const lim = vis === 'limited';
-    return { ...base, countryId: sec.countryId, label: lim ? (sec.kind === 'zone' ? `Reported ${ZONE_TYPES[sec.zoneType]?.en.toLowerCase() || 'activity'}` : `${dem} facility`) : sec.callsign, sub: lim ? 'Unconfirmed' : sec.type, zoneType: sec.zoneType || 'exercise', radiusKm: lim ? (sec.radiusKm || 50) * 1.6 : sec.radiusKm || 50, route: lim ? [G.fuzzPoint(o, (sec.radiusKm || 50) * 0.5, sec.id + 'z')] : [o], lines: lim ? [{ k: 'Country', v: cName(sec.countryId) }, { k: 'Status', v: 'Unconfirmed reports' }] : [{ k: 'Country', v: cName(sec.countryId) }, { k: 'Type', v: sec.type || '' }, { k: 'Mission', v: sec.missionVisible ? sec.mission : 'Government activity' }], fuzzKm: lim ? sec.radiusKm * 0.5 : 0 };
+    return { ...base, countryId: sec.countryId, label: lim ? (sec.kind === 'zone' ? `${ZONE_TYPES[sec.zoneType]?.en || 'Aktywność'} (niepotwierdzone)` : `Obiekt (${cn})`) : sec.callsign, sub: lim ? 'Niepotwierdzone' : sec.type, zoneType: sec.zoneType || 'exercise', radiusKm: lim ? (sec.radiusKm || 50) * 1.6 : sec.radiusKm || 50, route: lim ? [G.fuzzPoint(o, (sec.radiusKm || 50) * 0.5, sec.id + 'z')] : [o],
+      lines: lim ? [country, { k: 'Status', v: 'niepotwierdzone doniesienia' }] : [country, { k: 'Typ', v: sec.type || '' }, { k: 'Misja', v: sec.missionVisible ? tr('mission', sec.mission) : 'działalność rządowa' }], fuzzKm: lim ? sec.radiusKm * 0.5 : 0 };
   }
   if (vis === 'public') {
     return { ...base, countryId: sec.countryId, label: sec.callsign, sub: sec.type, route, destCc: destC, passengerIds: sec.passengersVisible ? sec.passengers || [] : [],
-      lines: [{ k: 'Country', v: `${cFlag(sec.countryId)} ${cName(sec.countryId)}` }, { k: 'Operator', v: sec.operator || '' }, { k: 'Type', v: sec.type || K.en }, moving ? { k: 'Route', v: `${o.name} → ${d.name}` } : { k: 'Location', v: o?.name || '' }, { k: 'Mission', v: sec.missionVisible ? sec.mission : 'Government activity' }, { k: 'Passengers', v: sec.passengersVisible ? (paxNames.join(', ') || '—') : 'CLASSIFIED' }] };
+      lines: [country, { k: 'Operator', v: sec.operator || '' }, { k: 'Typ', v: sec.type || K.en }, moving ? { k: 'Trasa', v: `${o.name} → ${d.name}` } : { k: 'Położenie', v: o?.name || '' }, { k: 'Misja', v: sec.missionVisible ? tr('mission', sec.mission) : 'działalność rządowa' }, { k: 'Pasażerowie', v: sec.passengersVisible ? (paxNames.join(', ') || '—') : 'TAJNE' }] };
   }
   if (vis === 'limited') {
     const fr = moving ? [o, ...route.slice(1).map((p, i) => ({ ...G.fuzzPoint(p, 90, sec.id + 'L' + i + (sec.depTime || 0)), name: '?' }))] : [G.fuzzPoint(o, 40, sec.id + 'L')];
-    const kindTxt = sec.kind === 'aircraft' ? 'Aircraft' : sec.kind === 'submarine' ? 'Submarine' : sec.kind === 'ground' ? 'Convoy' : 'Vessel';
-    return { ...base, countryId: sec.countryId, label: `${dem} ${sec.category && sec.category !== 'Unknown' ? sec.category + ' ' : ''}${kindTxt}`, sub: 'Limited information', route: fr, destCc: destC, fuzzKm: moving ? 60 : 40,
-      lines: [{ k: 'Country', v: `${cFlag(sec.countryId)} ${cName(sec.countryId)}` }, moving ? { k: 'Origin', v: o.name } : { k: 'Area', v: nearestPlace(o) }, moving ? { k: 'Heading', v: destC ? `toward ${cName(destC)}` : G.compass(G.bearing(o, d)) } : null, { k: 'Mission', v: sec.missionVisible ? `${sec.mission} mission suspected` : 'Unknown' }, { k: 'Passengers', v: 'CLASSIFIED' }].filter(Boolean) };
+    const cat = sec.category && sec.category !== 'Unknown' ? ' ' + tr('category', sec.category).toLowerCase() : '';
+    return { ...base, countryId: sec.countryId, label: `${KIND_NOUN[sec.kind] || 'Obiekt'}${cat} (${cn})`, sub: 'Informacja ograniczona', route: fr, destCc: destC, fuzzKm: moving ? 60 : 40,
+      lines: [country, moving ? { k: 'Skąd', v: o.name } : { k: 'Rejon', v: nearestPlace(o) }, moving ? { k: 'Kierunek', v: destC ? `w stronę: ${cName(destC)}` : G.compass(G.bearing(o, d)) } : null, { k: 'Misja', v: sec.missionVisible ? `prawdopodobnie ${tr('mission', sec.mission).toLowerCase()}` : 'nieznana' }, { k: 'Pasażerowie', v: 'TAJNE' }].filter(Boolean) };
   }
   // classified
   const km = sec.kind === 'submarine' ? 80 : 150;
-  const kindTxt = sec.kind === 'aircraft' ? 'Unknown aircraft' : sec.kind === 'ground' ? 'Unidentified ground movement' : 'Unknown naval contact';
-  return { ...base, countryId: null, label: kindTxt, sub: sec.kind === 'submarine' ? 'Possible submarine' : 'Unidentified', route: route.map((p, i) => ({ ...G.fuzzPoint(p, km, sec.id + 'C' + i + (sec.depTime || 0)), name: '?' })), fuzzKm: km, confidence: sec.confidence || 45,
-    lines: [{ k: 'Type', v: sec.kind === 'submarine' ? 'Possible submarine' : sec.kind === 'aircraft' ? 'Possible government aircraft' : 'Unknown' }, { k: 'Confidence', v: (sec.confidence || 45) + '%' }] };
+  const kindTxt = sec.kind === 'aircraft' ? 'Nieznany samolot' : sec.kind === 'ground' ? 'Niezidentyfikowany ruch wojsk' : 'Nieznany kontakt morski';
+  return { ...base, countryId: null, label: kindTxt, sub: sec.kind === 'submarine' ? 'Możliwy okręt podwodny' : 'Niezidentyfikowany', route: route.map((p, i) => ({ ...G.fuzzPoint(p, km, sec.id + 'C' + i + (sec.depTime || 0)), name: '?' })), fuzzKm: km, confidence: sec.confidence || 45,
+    lines: [{ k: 'Typ', v: sec.kind === 'submarine' ? 'możliwy okręt podwodny' : sec.kind === 'aircraft' ? 'możliwy samolot rządowy' : 'nieznany' }, { k: 'Pewność', v: (sec.confidence || 45) + '%' }] };
 }
 
 // ───────── WIDOKI OBIEKTÓW (zależne od perspektywy) ─────────
@@ -220,18 +239,18 @@ function fullView(sec) {
     ...sec, key: 'u:' + sec.id, src: 'full', label: sec.callsign || sec.name || K.en, sub: sec.type || K.en, passengerIds: sec.passengers || [],
     destCc: countryAtPlace(d), radiusKm: sec.radiusKm, sat: sec.sat, canEdit: canEdit(sec.countryId),
     lines: [
-      { k: 'Country', v: `${cFlag(sec.countryId)} ${cName(sec.countryId)}` }, sec.operator ? { k: 'Operator', v: sec.operator } : null,
-      { k: 'Type', v: `${sec.type || K.en}${sec.category ? ' · ' + sec.category : ''}` },
-      route.length > 1 ? { k: 'Route', v: route.map(p => p.name).join(' → ') } : o ? { k: 'Location', v: o.name } : null,
-      { k: 'Mission', v: sec.mission || 'Unknown' }, ['aircraft', 'ship', 'submarine', 'ground'].includes(sec.kind) && !pax.length ? { k: 'Passengers', v: '—' } : null,
-      { k: 'Visibility', v: VIS[sec.visibility] || sec.visibility }, sec.notes ? { k: 'Notes', v: sec.notes } : null
+      { k: 'Państwo', v: `${cFlag(sec.countryId)} ${cName(sec.countryId)}` }, sec.operator ? { k: 'Operator', v: sec.operator } : null,
+      { k: 'Typ', v: `${sec.type || K.en}${sec.category ? ' · ' + tr('category', sec.category) : ''}` },
+      route.length > 1 ? { k: 'Trasa', v: route.map(p => p.name).join(' → ') } : o ? { k: 'Położenie', v: o.name } : null,
+      { k: 'Misja', v: tr('mission', sec.mission) || 'nieznana' }, ['aircraft', 'ship', 'submarine', 'ground'].includes(sec.kind) && !pax.length ? { k: 'Pasażerowie', v: '—' } : null,
+      { k: 'Widoczność', v: VIS[sec.visibility] || sec.visibility }, sec.notes ? { k: 'Notatki', v: sec.notes } : null
     ].filter(Boolean)
   };
 }
 function pubView(id, pub) { return { ...pub, id, key: 'u:' + id, src: 'pub', canEdit: false, hideFuture: pub.visibility === 'classified' || pub.kind === 'contact' }; }
 function intelView(i) {
-  return { ...i, key: 'i:' + i.id, src: 'intel', hideFuture: i.level !== 'identified', kind: i.kind || 'contact', label: i.label || 'Possible contact', sub: `INTEL · ${i.confidence ?? '?'}%`, canEdit: realGM(),
-    lines: [...(i.lines || []), { k: 'Confidence', v: (i.confidence ?? '?') + '%' }, i.text ? { k: 'Assessment', v: i.text } : null].filter(Boolean) };
+  return { ...i, key: 'i:' + i.id, src: 'intel', hideFuture: i.level !== 'identified', kind: i.kind || 'contact', label: i.label || 'Możliwy kontakt', sub: `WYWIAD · ${i.confidence ?? '?'}%`, canEdit: realGM(),
+    lines: [...(i.lines || []), { k: 'Pewność', v: (i.confidence ?? '?') + '%' }, i.text ? { k: 'Ocena', v: i.text } : null].filter(Boolean) };
 }
 export function unitViews() {
   const P = persp(), out = [];
@@ -250,6 +269,7 @@ export function unitViews() {
   return out;
 }
 
+// statusOf zwraca KLUCZ (do kolorów CSS); na ekran: tr('status', klucz)
 export function statusOf(v, t = gameNow()) {
   if (v.statusOverride) return v.statusOverride;
   if (v.kind === 'satellite') return 'IN ORBIT';
@@ -259,6 +279,7 @@ export function statusOf(v, t = gameNow()) {
   const air = v.kind === 'aircraft';
   return { static: air ? 'ON GROUND' : v.kind === 'contact' ? 'DETECTED' : 'STATIONARY', before: air ? 'SCHEDULED' : 'IN PORT', moving: air ? 'AIRBORNE' : 'UNDERWAY', hold: 'HOLDING', after: air ? 'LANDED' : 'ARRIVED' }[m.phase];
 }
+export const statusChip = (v, t) => { const k = statusOf(v, t); return { key: k, cls: 's-' + String(k).split(' ')[0].toLowerCase(), text: tr('status', k) }; };
 export function posOf(v, t = gameNow()) {
   if (v.kind === 'satellite' && v.sat) return { pos: G.satPos(v.sat, t), heading: 90, phase: 'moving' };
   if (v.pos && !v.route) return { pos: v.pos, heading: 0, phase: 'static' };
@@ -283,30 +304,30 @@ export function feedItems() {
     const own = v.src === 'full' && v.countryId === P;
     if (m.start <= t && m.start > horizon) {
       let txt;
-      if (v.kind === 'contact') txt = `${v.label} detected near ${nearestPlace(o)}`;
-      else if (known) txt = `${fl}${v.label} ${air ? 'departed' : 'left'} ${o.name}${v.src === 'full' ? ' → ' + d.name : ''}`;
-      else if (v.visibility === 'limited') txt = `${fl}${v.label} ${air ? 'airborne' : 'underway'} from ${o.name}, heading ${v.destCc ? 'toward ' + cName(v.destCc) : G.compass(G.bearing(o, d)).toLowerCase()}`;
-      else txt = `${v.label} detected near ${nearestPlace(o)}`;
+      if (v.kind === 'contact') txt = `${v.label} — wykryto w rejonie: ${nearestPlace(o)}`;
+      else if (known) txt = `${fl}${v.label} — ${air ? 'start' : 'wypłynął'}: ${o.name}${v.src === 'full' ? ' → ' + d.name : ''}`;
+      else if (v.visibility === 'limited') txt = `${fl}${v.label} — ${air ? 'w powietrzu' : 'w drodze'} z: ${o.name}, kierunek: ${v.destCc ? cName(v.destCc) : G.compass(G.bearing(o, d)).toLowerCase()}`;
+      else txt = `${v.label} — wykryto w rejonie: ${nearestPlace(o)}`;
       items.push({ id: `d:${v.key}:${m.start}`, t: m.start, type: 'move', icon: known || v.visibility === 'limited' ? ic : '⚠️', text: txt, unitKey: v.key, own });
     }
     if (P && P !== 'gm' && !own && v.destCc === P && m.end - 1800000 <= t && m.end > t) {
-      items.push({ id: `a:${v.key}:${m.end}`, t: m.end - 1800000, type: 'move', icon: ic, text: `${fl}${v.label} approaching ${known ? d.name : cName(P)}`, unitKey: v.key, important: true });
+      items.push({ id: `a:${v.key}:${m.end}`, t: m.end - 1800000, type: 'move', icon: ic, text: `${fl}${v.label} zbliża się do: ${known ? d.name : cName(P)}`, unitKey: v.key, important: true });
     }
     if (m.end <= t && m.end > horizon && v.kind !== 'contact') {
       let txt;
-      if (known) txt = `${fl}${v.label} ${air ? 'landed in' : 'arrived at'} ${d.name}`;
-      else if (v.visibility === 'limited') txt = `${fl}${v.label} arrived in ${v.destCc ? cName(v.destCc) : nearestPlace(d)}`;
-      else txt = `Contact lost near ${nearestPlace(d)}`;
+      if (known) txt = `${fl}${v.label} — ${air ? 'lądowanie' : 'dotarł'}: ${d.name}`;
+      else if (v.visibility === 'limited') txt = `${fl}${v.label} — dotarł do: ${v.destCc ? cName(v.destCc) : nearestPlace(d)}`;
+      else txt = `Utracono kontakt w rejonie: ${nearestPlace(d)}`;
       items.push({ id: `l:${v.key}:${m.end}`, t: m.end, type: 'move', icon: known || v.visibility === 'limited' ? (air ? '🛬' : '⚓') : '❔', text: txt, unitKey: v.key, own, important: own || v.destCc === P });
     }
   });
   Object.values(S.data.intel).forEach(i => {
     if (i.toCountry !== P || !i.createdGame) return;
-    items.push({ id: 'i:' + i.id, t: i.createdGame, type: 'intel', icon: '📡', text: `${i.label}${i.confidence != null ? ` — confidence ${i.confidence}%` : ''}`, unitKey: i.route || i.pos ? 'i:' + i.id : null, important: true });
+    items.push({ id: 'i:' + i.id, t: i.createdGame, type: 'intel', icon: '📡', text: `${i.label}${i.confidence != null ? ` — pewność ${i.confidence}%` : ''}`, unitKey: i.route || i.pos ? 'i:' + i.id : null, important: true });
   });
   Object.values(S.data.messages).forEach(m => {
     if (!P || P === 'gm' || m.to !== P) return;
-    items.push({ id: 'm:' + m.id + ':' + (m.status || ''), t: m.gameTime || 0, type: 'msg', icon: '🔒', text: `${m.kind === 'proposal' ? 'Proposal' : 'Message'} from ${cFlag(m.from)} ${cName(m.from)}${m.subject ? ': ' + m.subject : ''}`, from: m.from, important: true });
+    items.push({ id: 'm:' + m.id + ':' + (m.status || ''), t: m.gameTime || 0, type: 'msg', icon: '🔒', text: `${m.kind === 'proposal' ? 'Propozycja' : 'Wiadomość'} od: ${cFlag(m.from)} ${cName(m.from)}${m.subject ? ' — ' + m.subject : ''}`, from: m.from, important: true });
   });
   return items.filter(i => i.t <= t || i.future).sort((a, b) => b.t - a.t).slice(0, 300);
 }
@@ -321,12 +342,12 @@ export async function log(op, target, result = 'SUCCESS', error = '', errorId = 
 }
 function validate(ops) {
   for (const o of ops) {
-    if (!o.path || o.path.split('/').length % 2 !== 0 || o.path.includes('undefined') || o.path.includes('//')) throw new Error('invalid document path: ' + o.path);
+    if (!o.path || o.path.split('/').length % 2 !== 0 || o.path.includes('undefined') || o.path.includes('//')) throw new Error('nieprawidłowa ścieżka dokumentu: ' + o.path);
     if (o.t === 'del') continue;
     const d = o.data || {};
-    (d.route || []).forEach(p => { if (!p || !isFinite(p.lat) || !isFinite(p.lon)) throw new Error('invalid destination / waypoint (' + (p?.name || 'NULL') + ')'); });
-    if ('duration' in d && d.duration != null && (!isFinite(d.duration) || d.duration < 0)) throw new Error('invalid duration');
-    if ('depTime' in d && d.depTime != null && !isFinite(d.depTime)) throw new Error('invalid departure time');
+    (d.route || []).forEach(p => { if (!p || !isFinite(p.lat) || !isFinite(p.lon)) throw new Error('nieprawidłowy cel / punkt trasy (' + (p?.name || 'NULL') + ')'); });
+    if ('duration' in d && d.duration != null && (!isFinite(d.duration) || d.duration < 0)) throw new Error('nieprawidłowy czas podróży');
+    if ('depTime' in d && d.depTime != null && !isFinite(d.depTime)) throw new Error('nieprawidłowy czas startu');
   }
 }
 export let toastFn = () => { };
@@ -398,7 +419,7 @@ export function writeChar(w, c) {
 }
 
 // ───────── BACKUPY ─────────
-export const BACKUP_COLS = ['countries', 'countryPrivate', 'characters', 'charSecrets', 'units', 'unitSecrets', 'intel', 'news', 'gmNotes', 'relations', 'treaties', 'messages', 'history', 'territories', 'users', 'meta'];
+export const BACKUP_COLS = ['countries', 'countryPrivate', 'characters', 'charSecrets', 'units', 'unitSecrets', 'intel', 'news', 'gmNotes', 'relations', 'treaties', 'messages', 'history', 'territories', 'images', 'users', 'meta'];
 export async function snapshotWorld() {
   const data = {};
   for (const c of BACKUP_COLS) data[c] = await DB.getAll(c);
@@ -436,13 +457,13 @@ export async function deleteBackup(b, quiet) {
 }
 export async function loadBackup(b) {
   let s = '';
-  for (let i = 0; i < (b.parts || 1); i++) { const p = await DB.get(`backups/${b.id}/parts/${i}`); if (!p) throw new Error('missing backup part ' + i); s += p.data; }
+  for (let i = 0; i < (b.parts || 1); i++) { const p = await DB.get(`backups/${b.id}/parts/${i}`); if (!p) throw new Error('brak części kopii nr ' + i); s += p.data; }
   return JSON.parse(s);
 }
 export async function restoreSnapshot(snap, label) {
-  if (!snap?.data) throw new Error('invalid backup file');
-  const pre = await createBackup(`Before restore: ${label}`, { auto: true, reason: 'pre-restore', quiet: true });
-  if (!pre) throw new Error('safety backup failed — restore aborted');
+  if (!snap?.data) throw new Error('nieprawidłowy plik kopii');
+  const pre = await createBackup(`Przed przywróceniem: ${label}`, { auto: true, reason: 'pre-restore', quiet: true });
+  if (!pre) throw new Error('nie udało się zrobić kopii bezpieczeństwa — przywracanie przerwane');
   try {
     const ops = [];
     for (const c of BACKUP_COLS) {

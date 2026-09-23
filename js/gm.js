@@ -4,15 +4,16 @@ import { S, G, DB, run, now, newId, isDemo, gameNow, turn, realGM, isAdmin, pers
 import { h, esc, form, modal, confirmBox, toast, chip, kv, download, pickFile, ago } from './ui.js';
 import { COUNTRY_PRESETS } from './places.js';
 import { AUTH } from './db.js';
-import { select, drawArea, geoNames, TERR_STATUS, flyTo, npcOf, prevLabel, clipToCountry, focusCountry } from './map.js';
-import { hideModals } from './ui.js';
+import { select, drawArea, geoNames, TERR_STATUS, flyTo, npcOf, prevLabel, focusCountry, areaGeo, shapeCenter } from './map.js';
+import { hideModals, img } from './ui.js';
+import { usedImageRefs } from './images.js';
 import * as U from './units.js';
 import { seedWorld } from './seed.js';
 
 const goTab = () => window.dispatchEvent(new CustomEvent('ww:tab', { detail: 'gm' }));
 let sub = 'players';
 const PALETTE = ['#3fa7ff', '#ffcc00', '#ff5a5f', '#7bd88f', '#c792ea', '#ff9d3d', '#4fd1c5', '#f78fb3', '#a3be8c', '#e6c07b', '#61afef', '#d19a66'];
-const ROLES = [['pending', '⏳ oczekuje'], ['leader', '👑 Country Leader'], ['observer', '👁 Observer'], ['gm', '🎲 Game Master'], ['admin', '🛡️ Admin'], ['blocked', '⛔ zablokowany']];
+const ROLES = [['pending', '⏳ oczekuje'], ['leader', '👑 Przywódca państwa'], ['observer', '👁 Obserwator'], ['gm', '🎲 Game Master'], ['admin', '🛡️ Admin'], ['blocked', '⛔ zablokowany']];
 const STAFF = ['gm', 'admin'];
 // GM zarządza graczami, ale role GM/Admin nadaje i odbiera tylko admin
 const roleOpts = () => isAdmin() ? ROLES : ROLES.filter(([r]) => !STAFF.includes(r));
@@ -34,7 +35,7 @@ function players() {
   const cOpts = [['', '—'], ...countriesSorted().map(c => [c.id, `${c.flag} ${c.name}`])];
   const upd = (u, patch, label) => run('UPDATE_PLAYER', `${u.displayName}: ${label}`, w => w.merge('users/' + u.id, patch));
   return h('div',
-    h('h3', 'PLAYER MANAGEMENT'),
+    h('h3', 'ZARZĄDZANIE GRACZAMI'),
     h('div.table-wrap', h('table.tbl', h('thead', h('tr', h('th', 'Gracz'), h('th', 'Państwo'), h('th', 'Rola'), h('th', 'Aktywność'), h('th', ''))),
       h('tbody', us.map(u => h('tr' + (u.role === 'pending' ? '.pending' : ''),
         h('td', h('b', u.displayName || '?'), h('br'), h('small.muted', u.email || u.id.slice(0, 10))),
@@ -44,9 +45,9 @@ function players() {
         h('td', canManage(u) ? h('div.btn-row',
           u.suspendedCountry ? h('button.btn.xs', { title: 'Oddaj państwo', onclick: () => upd(u, { role: 'leader', countryId: u.suspendedCountry, suspendedCountry: null }, 'restore control') }, '↩ oddaj') :
             u.role === 'leader' && u.countryId ? h('button.btn.xs', { title: 'GM czasowo przejmuje państwo — gracz staje się obserwatorem', onclick: () => upd(u, { role: 'observer', suspendedCountry: u.countryId }, 'GM takes control') }, '✋ przejmij') : null,
-          isAdmin() ? h('button.btn.xs.danger', { onclick: async () => { if (!await confirmBox(`Usunąć gracza ${u.displayName}? (konto logowania zostaje — po ponownym zalogowaniu trafi do „oczekujących”)`, { danger: true })) return; await createBackup(`Before delete player ${u.displayName}`, { auto: true, reason: 'pre-delete', quiet: true }); run('DELETE_PLAYER', u.displayName, w => w.del('users/' + u.id)); } }, '🗑') : null) : h('small.muted', u.id === S.user.uid ? 'ty' : '—'))))))),
+          isAdmin() ? h('button.btn.xs.danger', { onclick: async () => { if (!await confirmBox(`Usunąć gracza ${u.displayName}? (konto logowania zostaje — po ponownym zalogowaniu trafi do „oczekujących”)`, { danger: true })) return; await createBackup(`Przed usunięciem gracza ${u.displayName}`, { auto: true, reason: 'pre-delete', quiet: true }); run('DELETE_PLAYER', u.displayName, w => w.del('users/' + u.id)); } }, '🗑') : null) : h('small.muted', u.id === S.user.uid ? 'ty' : '—'))))))),
     h('div.btn-row', h('button.btn.sm', { onclick: createPlayer }, '+ Utwórz konto gracza')),
-    h('p.muted', 'Nowi gracze logują się sami (Google lub e-mail) i pojawiają się tu jako „oczekuje”. Wybierz im państwo — rola zmieni się na Country Leader. „Przejmij” czasowo odbiera graczowi państwo (widzi świat jako obserwator), a GM steruje nim sam; „oddaj” przywraca.'));
+    h('p.muted', 'Nowi gracze logują się sami (Google lub e-mail) i pojawiają się tu jako „oczekuje”. Wybierz im państwo — rola zmieni się na Przywódca państwa. „Przejmij” czasowo odbiera graczowi państwo (widzi świat jako obserwator), a GM steruje nim sam; „oddaj” przywraca.'));
 }
 async function createPlayer() {
   const v = await form('Nowe konto gracza', [{ k: 'name', label: 'Nazwa gracza', req: true }, { k: 'email', label: 'E-mail', type: 'email', req: !isDemo }, { k: 'pass', label: 'Hasło startowe (min. 6 znaków)', req: !isDemo }, { k: 'countryId', label: 'Państwo', type: 'select', options: [['', '—'], ...countriesSorted().map(c => [c.id, `${c.flag} ${c.name}`])] }, { k: 'role', label: 'Rola', type: 'select', value: 'leader', options: roleOpts().filter(r => r[0] !== 'pending') }]);
@@ -75,22 +76,22 @@ async function editCountry(cid) {
   let pre = null;
   if (!c) {
     const pick = await form('Dodaj państwo', [{ type: 'info', html: 'Wybierz realne państwo z listy (flaga, stolica i kontur mapy uzupełnią się same) albo zostaw puste, by stworzyć fikcyjne.' },
-      { k: 'preset', label: 'Państwo', ph: 'np. Sweden (SE)', type: 'text', list: 'dl-presets' }], { submit: 'Dalej' });
+      { k: 'preset', label: 'Państwo', ph: 'np. Szwecja (SE)', type: 'text', list: 'dl-presets' }], { submit: 'Dalej' });
     if (!pick) return;
     const m = pick.preset.match(/\(([A-Z]{2})\)\s*$/) || [null, pick.preset.toUpperCase()];
     pre = presetByIso(m[1]) || COUNTRY_PRESETS.find(p => p.name.toLowerCase() === pick.preset.toLowerCase() || p.pl.toLowerCase() === pick.preset.toLowerCase());
     if (pick.preset && !pre) toast('Nie znaleziono — tworzę państwo fikcyjne', 'info');
     if (pre && S.data.countries[pre.c.toLowerCase()]) return toast('To państwo już istnieje', 'err');
   }
-  const base = c || (pre ? { name: pre.name, iso2: pre.c, isoN: pre.n, demonym: pre.dem, flag: flagOf(pre.c), capital: { name: pre.cap, lat: pre.lat, lon: pre.lon }, color: PALETTE[countriesSorted().length % PALETTE.length] } : { flag: '🏳️', color: PALETTE[countriesSorted().length % PALETTE.length] });
+  const base = c || (pre ? { name: pre.pl || pre.name, iso2: pre.c, isoN: pre.n, demonym: pre.dem, flag: flagOf(pre.c), capital: { name: pre.cap, lat: pre.lat, lon: pre.lon }, color: PALETTE[countriesSorted().length % PALETTE.length] } : { flag: '🏳️', color: PALETTE[countriesSorted().length % PALETTE.length] });
   const g = base.government || {};
   const v = await form(c ? `Profil: ${c.name}` : 'Nowe państwo', [
-    { k: 'name', label: 'Nazwa', value: base.name, req: true }, { k: 'official', label: 'Pełna nazwa', value: base.official, ph: 'Kingdom of Sweden' }, { k: 'tag', label: 'Tag', value: base.tag, ph: 'np. USA, RUS, ChRL' },
+    { k: 'name', label: 'Nazwa', value: base.name, req: true }, { k: 'official', label: 'Pełna nazwa', value: base.official, ph: 'Królestwo Szwecji' }, { k: 'tag', label: 'Tag', value: base.tag, ph: 'np. USA, RUS, ChRL' },
     { k: 'flag', label: 'Flaga (emoji)', value: base.flag }, { k: 'color', label: 'Kolor na mapie', type: 'color', value: base.color },
     { k: 'demonym', label: 'Przymiotnik (EN)', value: base.demonym, ph: 'Swedish' }, { k: 'iso2', label: 'Kod ISO-2', value: base.iso2 }, { k: 'isoN', label: 'Kod ISO numeryczny (kontur mapy)', value: base.isoN },
     { k: 'capital', label: 'Stolica', type: 'place', value: base.capital, req: true },
     { type: 'section', label: 'Government' },
-    { k: 'system', label: 'Ustrój', value: g.system, ph: 'Constitutional monarchy' }, { k: 'headTitle', label: 'Tytuł głowy państwa', value: g.headTitle || 'Head of state', ph: 'Monarch / President' },
+    { k: 'system', label: 'Ustrój', value: g.system, ph: 'Monarchia konstytucyjna' }, { k: 'headTitle', label: 'Tytuł głowy państwa', value: g.headTitle || 'Głowa państwa', ph: 'Monarcha / Prezydent' },
     { k: 'head', label: 'Głowa państwa', value: g.head }, { k: 'headOfGov', label: 'Szef rządu', value: g.headOfGov }, { k: 'rulingParty', label: 'Partia rządząca', value: g.rulingParty },
     { k: 'publicStats', label: 'Statystyki jawne dla wszystkich', type: 'check', value: base.publicStats }
   ], { wide: true });
@@ -116,13 +117,13 @@ async function editStats(cid) {
   if (!v) return;
   const doc = { countryId: cid, intelLevel: v.intelLevel ?? 2 };
   Object.entries(v).forEach(([key, x]) => { const [grp, k] = key.split('.'); if (k) (doc[grp] = doc[grp] || {})[k] = x; });
-  await createBackup(`Before stats change ${cName(cid)}`, { auto: true, reason: 'pre-stats', quiet: true });
+  await createBackup(`Przed zmianą statystyk: ${cName(cid)}`, { auto: true, reason: 'pre-stats', quiet: true });
   const pub = doc.pub; delete doc.pub;
   await run('UPDATE_STATS', cName(cid), w => { w.merge('countryPrivate/' + cid, doc); if (pub) w.merge('countries/' + cid, { custom: pub }); });
 }
 async function deleteCountry(cid) {
   if (!await confirmBox(`Usunąć ${cName(cid)} razem z postaciami, obiektami, raportami wywiadu i relacjami? Przed usunięciem zostanie zrobiony automatyczny backup.`, { danger: true, ok: 'Usuń państwo' })) return;
-  const b = await createBackup(`Before delete ${cName(cid)}`, { auto: true, reason: 'pre-delete', quiet: true });
+  const b = await createBackup(`Przed usunięciem: ${cName(cid)}`, { auto: true, reason: 'pre-delete', quiet: true });
   if (!b) return;
   await run('DELETE_COUNTRY', cName(cid), w => {
     w.del('countries/' + cid); w.del('countryPrivate/' + cid);
@@ -137,17 +138,17 @@ async function deleteCountry(cid) {
 // ───────── POSTACIE ─────────
 function chars() {
   return h('div', h('div.btn-row', h('button.btn.sm.primary', { onclick: () => editChar({}) }, '+ Nowa postać')),
-    countriesSorted().map(c => { const cs = charsOf(c.id); return cs.length ? h('section', h('h3', `${c.flag} ${c.name}`), cs.map(ch => { const loc = charLocation(ch.id); return h('div.gm-row', h('span.avatar.sm', ch.avatar ? h('img', { src: ch.avatar, alt: '' }) : ch.icon || '👤'), h('div.grow', h('b', ch.name), h('small.muted', ` ${ch.title || ''} · 📍 ${loc?.text || '—'}${ch.visibility === 'classified' ? ' · 🔒' : ''}`)), h('div.btn-row', h('button.btn.xs', { onclick: () => editChar(ch) }, '✏️'), h('button.btn.xs.danger', { onclick: async () => { if (await confirmBox(`Usunąć postać ${ch.name}?`, { danger: true })) run('DELETE_CHARACTER', ch.name, w => { w.del('characters/' + ch.id); w.del('charSecrets/' + ch.id); }); } }, '🗑'))); })) : null; }));
+    countriesSorted().map(c => { const cs = charsOf(c.id); return cs.length ? h('section', h('h3', `${c.flag} ${c.name}`), cs.map(ch => { const loc = charLocation(ch.id); return h('div.gm-row', h('span.avatar.sm', ch.avatar ? img(ch.avatar) : ch.icon || '👤'), h('div.grow', h('b', ch.name), h('small.muted', ` ${ch.title || ''} · 📍 ${loc?.text || '—'}${ch.visibility === 'classified' ? ' · 🔒' : ''}`)), h('div.btn-row', h('button.btn.xs', { onclick: () => editChar(ch) }, '✏️'), h('button.btn.xs.danger', { onclick: async () => { if (await confirmBox(`Usunąć postać ${ch.name}?`, { danger: true })) run('DELETE_CHARACTER', ch.name, w => { w.del('characters/' + ch.id); w.del('charSecrets/' + ch.id); }); } }, '🗑'))); })) : null; }));
 }
 const ICONS = ['👑', '👔', '🛡️', '🌍', '🕵️', '⚓', '✈️', '🏭', '🎖️', '⚖️', '🔬', '💼', '📡', '🚀', '👤'];
 async function editChar(c = {}) {
   const gm = realGM();
   const cur = c.id ? charView(c.id) : c;
   const v = await form(c.id ? `Postać: ${cur.name}` : 'Nowa postać', [
-    { k: 'name', label: 'Imię i nazwisko', value: cur.name, req: true }, { k: 'title', label: 'Stanowisko', value: cur.title, ph: 'Minister of Defence' },
+    { k: 'name', label: 'Imię i nazwisko', value: cur.name, req: true }, { k: 'title', label: 'Stanowisko', value: cur.title, ph: 'Minister obrony' },
     { k: 'icon', label: 'Ikona', type: 'select', value: cur.icon || '👤', options: ICONS },
     { k: 'countryId', label: 'Państwo', type: 'select', value: cur.countryId, options: countriesSorted().map(x => [x.id, `${x.flag} ${x.name}`]), req: true },
-    { k: 'age', label: 'Wiek', type: 'number', value: cur.age }, { k: 'avatar', label: 'Zdjęcie (URL)', value: cur.avatar },
+    { k: 'age', label: 'Wiek', type: 'number', value: cur.age }, { k: 'avatar', label: 'Zdjęcie', type: 'image', value: cur.avatar, full: true },
     { k: 'desc', label: 'Opis', type: 'textarea', value: cur.desc },
     { k: 'status', label: 'Status', type: 'select', value: cur.status || 'Active', options: ['Active', 'Travelling', 'In talks', 'Hospitalised', 'Detained', 'Missing', 'Resigned', 'Deceased'] },
     { k: 'visibility', label: 'Widoczność', type: 'select', value: cur.visibility || 'public', options: [['public', 'Publiczna'], ['classified', 'Tajna tożsamość']] },
@@ -185,21 +186,21 @@ function turns() {
     h('div.btn-row', h('button.btn.primary', { onclick: newTurn }, '⏭ Zakończ turę i rozpocznij następną'), h('button.btn', { onclick: () => import('./app.js').then(a => a.clockModal()) }, '⏱ Zegar gry')),
     h('section', h('h3', 'Ustawienia tur'), kv('Przesunięcie czasu przy nowej turze', g.turnAdvance ? G.fmtDur(g.turnAdvance) : 'brak'),
       h('button.btn.sm', { onclick: async () => { const v = await form('Ustawienia tur', [{ k: 'adv', label: 'Nowa tura przesuwa czas gry o', type: 'duration', value: g.turnAdvance || '', help: 'np. „30d” = miesiąc na turę; puste = bez skoku' }, { k: 'news', label: 'Ogłaszaj nową turę w newsach', type: 'check', value: g.turnNews !== false }]); if (v) run('TURN_SETTINGS', '', w => w.merge('meta/game', { turnAdvance: v.adv || 0, turnNews: v.news })); } }, '⚙️ Zmień')),
-    h('p.muted', 'Nowa tura: automatyczny backup „End of Turn N”, wpis w kronice, opcjonalny skok czasu i komunikat dla graczy. Raporty tur znajdziesz w zakładce Kronika → Raporty tur.'));
+    h('p.muted', 'Nowa tura: automatyczny backup „Koniec tury N”, wpis w kronice, opcjonalny skok czasu i komunikat dla graczy. Raporty tur znajdziesz w zakładce Kronika → Raporty tur.'));
 }
 async function newTurn() {
   const T = turn();
   const v = await form(`Zakończyć turę ${T}?`, [{ k: 'summary', label: `Podsumowanie tury ${T} (do kroniki, opcjonalnie)`, type: 'textarea', rows: 4 }, { k: 'adv', label: 'Przesuń czas gry o', type: 'duration', value: S.game.turnAdvance || '' }], { submit: `⏭ Rozpocznij turę ${T + 1}` });
   if (!v) return;
-  const b = await createBackup(`End of Turn ${T}`, { auto: false, reason: 'turn-end', quiet: true });
+  const b = await createBackup(`Koniec tury ${T}`, { auto: false, reason: 'turn-end', quiet: true });
   if (!b) return;
   const g = gameNow() + (v.adv || 0);
   await run('NEW_TURN', `${T} → ${T + 1}`, w => {
     w.merge('meta/game', { turn: T + 1 });
     if (v.adv) { const c = S.clock || {}; w.set('meta/clock', { running: c.running !== false, rate: c.rate || 1, anchorGame: g, anchorReal: now() }); }
     if (v.summary) w.set('history/' + newId(), { turn: T, gameTime: gameNow(), text: v.summary, countries: [], createdAt: now() });
-    w.set('history/' + newId(), { turn: T + 1, gameTime: g, text: `Turn ${T + 1} begins.`, countries: [], createdAt: now(), system: true });
-    if (S.game.turnNews !== false) w.set('news/' + newId(), { headline: `⏭ TURN ${T + 1} BEGINS`, body: v.summary || '', category: 'Politics', reliability: 'Confirmed', breaking: true, countries: [], gameTime: g, createdAt: now(), audienceAll: true, audience: [], source: 'gm', system: true });
+    w.set('history/' + newId(), { turn: T + 1, gameTime: g, text: `Rozpoczyna się tura ${T + 1}.`, countries: [], createdAt: now(), system: true });
+    if (S.game.turnNews !== false) w.set('news/' + newId(), { headline: `⏭ ROZPOCZYNA SIĘ TURA ${T + 1}`, body: v.summary || '', category: 'Politics', reliability: 'Confirmed', breaking: true, countries: [], gameTime: g, createdAt: now(), audienceAll: true, audience: [], source: 'gm', system: true });
   });
   toast(`Rozpoczęto turę ${T + 1}`, 'ok');
 }
@@ -215,20 +216,20 @@ function system() {
 function backups() {
   const list = Object.values(S.data.backups).sort((a, b) => b.createdAt - a.createdAt);
   return h('div',
-    h('div.btn-row.wrap', h('button.btn.sm.primary', { onclick: async () => { const v = await form('CREATE BACKUP', [{ k: 'label', label: 'Opis kopii', ph: 'Before Sweden Naval Reform' }, { k: 'perm', label: '⭐ KEEP FOREVER', type: 'check' }]); if (v) createBackup(v.label, { permanent: v.perm }); } }, '💾 Create Backup'),
+    h('div.btn-row.wrap', h('button.btn.sm.primary', { onclick: async () => { const v = await form('Nowa kopia zapasowa', [{ k: 'label', label: 'Opis kopii', ph: 'Przed reformą marynarki Szwecji' }, { k: 'perm', label: '⭐ Zachowaj na zawsze', type: 'check' }]); if (v) createBackup(v.label, { permanent: v.perm }); } }, '💾 Utwórz backup'),
       h('button.btn.sm', { onclick: importBackup }, '⬆ Import z pliku'),
       h('button.btn.sm', { onclick: async () => download(`worldwatch-live-${new Date().toISOString().slice(0, 16)}.json`, JSON.stringify(await snapshotWorld(), null, 1)) }, '⬇ Eksport stanu teraz')),
     h('p.muted', `Auto-backup co ${S.game.autoBackupMinutes ?? 60} min (gdy GM jest online), przy końcu tury i przed ryzykownymi operacjami. Trzymane jest ${S.game.keepAutoBackups || 20} ostatnich automatycznych; ręczne i ⭐ nie są usuwane.`),
     list.map(b => h('div.backup' + (b.permanent ? '.perm' : ''),
       h('div.grow', h('b', `${b.permanent ? '⭐ ' : ''}Backup #${String(b.nr || 0).padStart(3, '0')}`), ' ', h('span', b.label), h('br'),
-        h('small.muted', `Turn ${b.turn} · ${new Date(b.createdAt).toISOString().slice(0, 16).replace('T', ' ')} · gra: ${G.fmtDT(b.gameTime)} · ${Math.round((b.size || 0) / 1024)} KB${b.auto ? ' · auto' : ''}`)),
+        h('small.muted', `Tura ${b.turn} · ${new Date(b.createdAt).toISOString().slice(0, 16).replace('T', ' ')} · gra: ${G.fmtDT(b.gameTime)} · ${Math.round((b.size || 0) / 1024)} KB${b.auto ? ' · auto' : ''}`)),
       h('div.btn-row', h('button.btn.xs', { title: 'Przywróć', onclick: () => restore(b) }, '🔄'), h('button.btn.xs', { title: 'Eksport', onclick: async () => { try { download(`worldwatch-backup-${b.nr}.json`, JSON.stringify(await loadBackup(b), null, 1)); } catch (e) { toast('Błąd eksportu: ' + e.message, 'err'); } } }, '⬇'),
-        h('button.btn.xs', { title: 'Keep forever', onclick: () => run('MARK_BACKUP', b.label, w => w.merge('backups/' + b.id, { permanent: !b.permanent }), { undo: false }) }, b.permanent ? '☆' : '⭐'),
+        h('button.btn.xs', { title: 'Zachowaj na zawsze', onclick: () => run('MARK_BACKUP', b.label, w => w.merge('backups/' + b.id, { permanent: !b.permanent }), { undo: false }) }, b.permanent ? '☆' : '⭐'),
         h('button.btn.xs.danger', { onclick: async () => { if (await confirmBox(`Usunąć backup „${b.label}”?`, { danger: true })) deleteBackup(b); } }, '🗑')))),
     !list.length ? h('div.empty', 'Brak kopii.') : null);
 }
 async function restore(b) {
-  if (!await confirmBox(`RESTORE BACKUP #${b.nr} — „${b.label}” (tura ${b.turn}). Cały świat wróci do tego stanu. Obecny stan zostanie najpierw zapisany jako osobny backup.`, { danger: true, ok: 'Przywróć' })) return;
+  if (!await confirmBox(`PRZYWRÓCIĆ BACKUP #${b.nr} — „${b.label}” (tura ${b.turn}). Cały świat wróci do tego stanu. Obecny stan zostanie najpierw zapisany jako osobny backup.`, { danger: true, ok: 'Przywróć' })) return;
   try { const snap = await loadBackup(b); if (await restoreSnapshot(snap, b.label)) toast(`✅ Przywrócono backup #${b.nr}`, 'ok', 7000); }
   catch (e) { toast('Błąd: ' + e.message, 'err', 8000); }
 }
@@ -247,7 +248,7 @@ function logs() {
     h('div.btn-row.wrap', h('select', { onchange: e => run('SET_RETENTION', e.target.value, w => w.merge('meta/game', { logRetentionDays: +e.target.value }), { undo: false }) }, RET.map(([d, l]) => h('option', { value: d, selected: (S.game.logRetentionDays ?? 7) === d }, 'Retencja: ' + l))),
       h('button.btn.sm', { onclick: async () => { const n = await cleanupLogs(true); toast(`Usunięto ${n} starych wpisów`, 'ok'); } }, '🧹 Clear old logs'),
       h('button.btn.sm.danger', { onclick: async () => { const all = Object.keys(S.data.logs); if (all.length && await confirmBox(`Usunąć WSZYSTKIE logi (${all.length})?`, { danger: true })) { await DB.commit(all.map(id => ({ t: 'del', path: 'logs/' + id }))); log('CLEAR_ALL_LOGS', all.length); } } }, '🗑 Usuń wszystkie'),
-      h('button.btn.sm', { onclick: () => download('worldwatch-errors.json', JSON.stringify(Object.values(S.data.logs).filter(l => l.result === 'ERROR'), null, 1)) }, '⬇ Export error log'),
+      h('button.btn.sm', { onclick: () => download('worldwatch-errors.json', JSON.stringify(Object.values(S.data.logs).filter(l => l.result === 'ERROR'), null, 1)) }, '⬇ Eksportuj log błędów'),
       h('button.chip' + (logFilter === 'err' ? '.on' : ''), { onclick: () => { logFilter = logFilter === 'err' ? 'all' : 'err'; goTab(); } }, 'tylko błędy')),
     h('p.muted', 'Logi techniczne są czyszczone automatycznie. Historia świata (Kronika) i backupy NIE są usuwane razem z logami.'),
     h('div.logs', list.map(l => h('div.log.' + (l.result === 'ERROR' ? 'err' : 'ok'), h('code', `[${new Date(l.tsMs).toTimeString().slice(0, 8)}] ${l.user} (${l.role})`), h('b', ' ' + l.op), ' ', h('span', l.target), ' ', h('span.res', l.result), h('button.btn.xs.logdel', { title: 'Usuń wpis', onclick: () => DB.commit([{ t: 'del', path: 'logs/' + l.id }]) }, '✕'), l.error ? h('div.lerr', `ERROR: ${l.error} · ${l.errorId}`) : null))));
@@ -258,7 +259,7 @@ function recovery() {
   return h('div',
     h('p.muted', 'Każda operacja GM zapisuje się atomowo — jeśli coś się wysypie w trakcie, nic nie zostaje zapisane (nie ma stanów „Stockholm → NULL”). Poniżej ostatnie operacje, które możesz cofnąć jednym kliknięciem.'),
     lastBackup ? h('div.btn-row', h('button.btn.sm', { onclick: () => restore(lastBackup) }, `⏮ Last valid state: backup #${lastBackup.nr} (${lastBackup.label})`)) : null,
-    h('h3', 'Restore previous operation'),
+    h('h3', 'Cofnij poprzednią operację'),
     list.map(u => h('div.gm-row', h('div.grow', h('b', u.op), ' ', h('span', u.target || ''), h('br'), h('small.muted', `${u.user} · ${ago(u.at)}`)),
       h('button.btn.xs', { onclick: async () => { if (await confirmBox(`Cofnąć „${u.op} ${u.target || ''}”? Dokumenty wrócą do stanu sprzed tej operacji.`)) { if (await undoOp(u)) toast('↩ Cofnięto', 'ok'); } } }, '↩ Cofnij'))),
     !list.length ? h('div.empty', 'Brak operacji do cofnięcia.') : null);
@@ -272,10 +273,10 @@ function diag() {
   const healthy = navigator.onLine && !DB.status.fromCache;
   return h('div',
     h('div.health' + (healthy ? '.ok' : '.bad'), healthy ? '● SYSTEM HEALTH: OK' : '● SYSTEM HEALTH: OFFLINE / CACHE'),
-    h('section', h('h3', 'Database status'), kv('Backend', DB.kind === 'demo' ? 'DEMO — localStorage' : 'Cloud Firestore'), kv('Połączenie', navigator.onLine ? (DB.status.fromCache ? 'dane z cache' : 'online') : 'OFFLINE'), counts.map(([k, n]) => kv(k, n))),
+    h('section', h('h3', 'Stan bazy danych'), kv('Backend', DB.kind === 'demo' ? 'DEMO — localStorage' : 'Cloud Firestore'), kv('Połączenie', navigator.onLine ? (DB.status.fromCache ? 'dane z cache' : 'online') : 'OFFLINE'), counts.map(([k, n]) => kv(k, n))),
     h('section', h('h3', 'Active connections'), active.length ? active.map(u => kv(u.displayName, `${u.role}${u.countryId ? ' · ' + cName(u.countryId) : ''}`)) : h('p.muted', '—')),
     h('section', h('h3', 'Last error'), last ? [kv('Error ID', last.id), kv('Operacja', last.op), kv('Treść', last.msg), kv('Kiedy', new Date(last.at).toLocaleString())] : h('p.muted', 'Brak błędów 🎉')),
-    h('section', h('h3', 'Game state'), kv('Tura', turn()), kv('Czas gry', G.fmtDT(gameNow())), kv('Zegar', S.clock?.running === false ? 'PAUZA' : `×${S.clock?.rate || 1}`), kv('Ostatni backup', lb ? `#${lb.nr} · ${ago(lb.createdAt)}` : 'brak')),
+    h('section', h('h3', 'Stan gry'), kv('Tura', turn()), kv('Czas gry', G.fmtDT(gameNow())), kv('Zegar', S.clock?.running === false ? 'PAUZA' : `×${S.clock?.rate || 1}`), kv('Ostatni backup', lb ? `#${lb.nr} · ${ago(lb.createdAt)}` : 'brak')),
     h('div.btn-row', h('button.btn.sm', { onclick: () => { sysTab = 'cleanup'; goTab(); } }, '🧹 Sprawdź duchy i spójność')));
 }
 // ───────── PORZĄDKI: duchy i zapychanie bazy (admin) ─────────
@@ -325,10 +326,19 @@ export async function cleanGhosts(cats, auto) {
 // raz na dobę, gdy admin jest online
 export async function autoClean() {
   if (!isAdmin() || AD().autoClean === false || now() - (S.admin?.lastClean || 0) < DAY) return;
-  const n = await cleanGhosts(scanGhosts().filter(c => c.auto), true);
+  const n = await cleanGhosts(scanGhosts().filter(c => c.auto), true) + await cleanImages(true);
   await DB.commit([{ t: 'merge', path: 'meta/admin', data: { lastClean: now(), lastCleanCount: n } }]).catch(() => { });
 }
 const sizeOf = c => JSON.stringify(Object.values(S.data[c] || {})).length;
+// obrazki, do których nic już się nie odwołuje (usunięte newsy, podmienione zdjęcia) — starsze niż doba
+async function cleanImages(auto) {
+  const used = usedImageRefs(), all = await DB.getAll('images');
+  const dead = all.filter(i => !used.has('img:' + i.id) && now() - (i.createdAt || 0) > DAY);
+  if (!auto) { if (!dead.length) { toast(`🖼️ Obrazków: ${all.length}, nieużywanych: 0`, 'ok'); return 0; } if (!await confirmBox(`Usunąć ${dead.length} nieużywanych obrazków (${Math.round(dead.reduce((n, i) => n + (i.size || 0), 0) / 1024)} KB)? Wszystkich w bazie: ${all.length}.`)) return 0; }
+  if (dead.length) await run(auto ? 'AUTO_CLEAN_IMAGES' : 'CLEAN_IMAGES', dead.length, w => dead.forEach(i => w.del('images/' + i.id)), { undo: false });
+  if (!auto) toast(`🖼️ Usunięto ${dead.length} obrazków`, 'ok');
+  return dead.length;
+}
 function cleanup() {
   const A = AD(), cats = scanGhosts(), total = cats.reduce((n, c) => n + c.items.length, 0);
   const cols = ['countries', 'countryPrivate', 'characters', 'unitSecrets', 'units', 'intel', 'news', 'messages', 'history', 'treaties', 'users', 'logs', 'undo', 'backups'];
@@ -346,10 +356,11 @@ function cleanup() {
           { k: 'playerRateLimit', label: 'Limit operacji gracza na minutę (0 = bez limitu)', type: 'number', value: A.playerRateLimit, min: 0 }]);
         if (v) run('ADMIN_SETTINGS', 'cleanup', w => w.merge('meta/admin', { autoClean: v.autoClean, pendingMaxDays: v.pendingMaxDays || 14, inactiveDays: v.inactiveDays || 60, playerRateLimit: v.playerRateLimit ?? 20 }), { undo: false });
       } }, '⚙️ Zmień')),
-    h('div.btn-row', h('button.btn.sm.primary', { disabled: !total, onclick: async () => { const safe = cats.filter(c => c.auto && c.items.length); if (await confirmBox(`Wyczyścić ${safe.reduce((n, c) => n + c.items.length, 0)} pozycji z bezpiecznych kategorii? Przed tym zrobię backup.`)) { await createBackup('Before cleanup', { auto: true, reason: 'pre-cleanup', quiet: true }); toast(`🧹 Usunięto ${await cleanGhosts(safe)} pozycji`, 'ok'); } } }, '🧹 Wyczyść bezpieczne')),
+    h('div.btn-row', h('button.btn.sm.primary', { disabled: !total, onclick: async () => { const safe = cats.filter(c => c.auto && c.items.length); if (await confirmBox(`Wyczyścić ${safe.reduce((n, c) => n + c.items.length, 0)} pozycji z bezpiecznych kategorii? Przed tym zrobię backup.`)) { await createBackup('Przed porządkami', { auto: true, reason: 'pre-cleanup', quiet: true }); toast(`🧹 Usunięto ${await cleanGhosts(safe)} pozycji`, 'ok'); } } }, '🧹 Wyczyść bezpieczne')),
     cats.map(c => h('section', h('h3', `${c.label} — ${c.items.length}`),
       c.items.length ? [h('ul.ghosts', c.items.slice(0, 30).map(i => h('li', i.t)), c.items.length > 30 ? h('li.muted', `…i ${c.items.length - 30} więcej`) : null),
-        h('button.btn.xs' + (c.auto ? '' : '.danger'), { onclick: async () => { if (await confirmBox(`Usunąć/naprawić ${c.items.length} pozycji: ${c.label}?`, { danger: !c.auto })) { if (!c.auto) await createBackup('Before cleanup ' + c.key, { auto: true, reason: 'pre-cleanup', quiet: true }); toast(`🧹 ${await cleanGhosts([c])} pozycji`, 'ok'); } } }, c.auto ? 'Wyczyść' : 'Usuń tych graczy')] : h('p.muted', '✓ brak'))),
+        h('button.btn.xs' + (c.auto ? '' : '.danger'), { onclick: async () => { if (await confirmBox(`Usunąć/naprawić ${c.items.length} pozycji: ${c.label}?`, { danger: !c.auto })) { if (!c.auto) await createBackup('Przed porządkami ' + c.key, { auto: true, reason: 'pre-cleanup', quiet: true }); toast(`🧹 ${await cleanGhosts([c])} pozycji`, 'ok'); } } }, c.auto ? 'Wyczyść' : 'Usuń tych graczy')] : h('p.muted', '✓ brak'))),
+    h('section', h('h3', 'Obrazki z komputera'), h('p.muted', 'Nieużywane obrazki (np. po usuniętych newsach) sprzątają się też automatycznie raz na dobę.'), h('button.btn.sm', { onclick: () => cleanImages(false) }, '🖼️ Sprawdź i usuń nieużywane obrazki')),
     h('section', h('h3', 'Rozmiar bazy (szacunkowo)'), cols.map(c => kv(c, `${Object.keys(S.data[c] || {}).length} dok. · ${(sizeOf(c) / 1024).toFixed(1)} KB`))),
     h('p.muted', 'Serwer dodatkowo odrzuca zbyt długie teksty (reguły Firestore), a niezatwierdzone konta nie mogą nic zapisać poza własnym profilem.'));
 }
@@ -379,13 +390,13 @@ function settings() {
       (g.places || []).map((p, i) => h('div.gm-row', h('div.grow', `${p.name} (${p.lat.toFixed(2)}, ${p.lon.toFixed(2)})`), h('button.btn.xs.danger', { onclick: () => run('DELETE_PLACE', p.name, w => w.merge('meta/game', { places: (g.places || []).filter((_, j) => j !== i) })) }, '🗑'))),
       h('button.btn.sm', { onclick: async () => { const v = await form('Nowa lokalizacja', [{ k: 'name', label: 'Nazwa', req: true }, { k: 'p', label: 'Pozycja', type: 'place', req: true }, { k: 'cc', label: 'Państwo', type: 'select', options: [['', '—'], ...countriesSorted().map(c => [c.iso2, `${c.flag} ${c.name}`])] }]); if (v) run('ADD_PLACE', v.name, w => w.merge('meta/game', { places: [...(g.places || []), { name: v.name, lat: +v.p.lat, lon: +v.p.lon, cc: v.cc }] })); } }, '+ Lokalizacja')),
     h('section', h('h3', 'Świat'),
-      h('div.btn-row.wrap', h('button.btn.sm', { onclick: async () => { if (await confirmBox('Wczytać przykładowy świat (Szwecja, Polska, USA, Chiny, Meksyk…)? Istniejące dane z tymi samymi ID zostaną nadpisane. Najpierw zrobię backup.')) { await createBackup('Before sample world', { auto: true, reason: 'pre-import', quiet: true }); await seedWorld(true); toast('Wczytano przykładowy świat', 'ok'); } } }, '🌍 Wczytaj przykładowy świat'),
+      h('div.btn-row.wrap', h('button.btn.sm', { onclick: async () => { if (await confirmBox('Wczytać przykładowy świat (Szwecja, Polska, USA, Chiny, Meksyk…)? Istniejące dane z tymi samymi ID zostaną nadpisane. Najpierw zrobię backup.')) { await createBackup('Przed wczytaniem przykładowego świata', { auto: true, reason: 'pre-import', quiet: true }); await seedWorld(true); toast('Wczytano przykładowy świat', 'ok'); } } }, '🌍 Wczytaj przykładowy świat'),
         isAdmin() ? h('button.btn.sm.danger', { onclick: wipeWorld }, '☢ Wyczyść świat') : null,
         isAdmin() ? h('button.btn.sm.danger', { onclick: factoryReset }, '💣 Usuń wszystko (po testach)') : null)));
 }
 async function wipeWorld() {
   if (!await confirmBox('Usunąć WSZYSTKIE państwa, obiekty, postacie, newsy, traktaty, wiadomości i kronikę? Gracze, backupy i logi zostają. Najpierw zrobię backup.', { danger: true, ok: 'Wyczyść' })) return;
-  const b = await createBackup('Before wipe', { auto: false, reason: 'pre-wipe', quiet: true }); if (!b) return;
+  const b = await createBackup('Przed wyczyszczeniem', { auto: false, reason: 'pre-wipe', quiet: true }); if (!b) return;
   const cols = ['countries', 'countryPrivate', 'characters', 'charSecrets', 'units', 'unitSecrets', 'intel', 'news', 'gmNotes', 'relations', 'treaties', 'messages', 'history', 'territories'];
   await run('WIPE_WORLD', '', w => cols.forEach(c => Object.keys(S.data[c]).forEach(id => w.del(`${c}/${id}`))), { undo: false });
 }
@@ -404,7 +415,7 @@ async function factoryReset() {
   if (!v) return;
   if (v.confirm.toUpperCase() !== 'USUŃ') return toast('Nie potwierdzono — nic nie usunięto', 'info');
   if (v.download) download(`worldwatch-przed-resetem-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(await snapshotWorld(), null, 1));
-  const cols = ['countries', 'countryPrivate', 'characters', 'charSecrets', 'units', 'unitSecrets', 'intel', 'news', 'gmNotes', 'relations', 'treaties', 'messages', 'history', 'territories'];
+  const cols = ['countries', 'countryPrivate', 'characters', 'charSecrets', 'units', 'unitSecrets', 'intel', 'news', 'gmNotes', 'relations', 'treaties', 'messages', 'history', 'territories', 'images'];
   if (v.logs) cols.push('logs', 'undo');
   const ok = await run('FACTORY_RESET', Object.entries(v).filter(([, x]) => x === true).map(([k]) => k).join(','), async w => {
     for (const c of cols) (await DB.getAll(c)).forEach(d => w.del(`${c}/${d.id}`));
@@ -423,7 +434,7 @@ function terr() {
     h('p.muted', 'Całe państwo z mapy albo narysowany obszar przechodzi pod kontrolę innego państwa. Usunięcie wpisu = teren wraca do pierwotnego właściciela.'),
     list.map(t => h('div.gm-row', { style: { '--c': cColor(t.controller) } },
       h('div.grow', h('b', `${cFlag(t.controller)} ${t.label}`), h('br'), h('small.muted', `${TERR_STATUS[t.status]} · ${t.kind === 'area' ? 'obszar' : 'całe terytorium'}${prevLabel(t) ? ' · wcześniej ' + prevLabel(t) : ''} · od ${G.fmtDate(t.since)}`)),
-      h('div.btn-row', t.kind === 'area' && h('button.btn.xs', { onclick: () => flyTo(t.points[0].lat, t.points[0].lon, 5) }, '🗺'),
+      h('div.btn-row', t.kind === 'area' && h('button.btn.xs', { onclick: () => { const c = shapeCenter(areaGeo(t)); c && flyTo(c.lat, c.lon, 5); } }, '🗺'),
         h('button.btn.xs', { onclick: () => conquer(t) }, '✏️'),
         h('button.btn.xs', { title: 'Wyzwolenie / zwrot', onclick: () => liberate(t) }, '🕊️')))),
     !list.length ? h('div.empty', 'Brak zajętych terenów.') : null);
@@ -436,7 +447,7 @@ export async function conquer(t = {}) {
     { k: 'kind', label: 'Co zostało zajęte', type: 'select', value: t.clipIso ? 'part' : t.kind || 'country', options: [['country', 'Całe państwo / terytorium'], ['part', 'Część państwa — narysuję, przytnie się do granic'], ['area', 'Dowolny obszar — narysuję (np. morze, kilka krajów)']] },
     { k: 'isoN', label: 'Terytorium', type: 'select', value: t.isoN || t.clipIso || '', options: [['', '— wybierz —'], ...names.map(n => [n.isoN, (byIso(n.isoN)?.flag || npcOf(n.isoN)?.flag || '🏳️') + ' ' + n.name + (byIso(n.isoN) ? '' : ' (NPC)')])], show: x => x.kind !== 'area' },
     { k: 'label', label: 'Nazwa obszaru', value: t.kind === 'area' ? t.label : '', ph: 'np. Okręg kaliningradzki, Północna Gotlandia', show: x => x.kind !== 'country' },
-    { k: 'redraw', label: 'Narysuj obszar od nowa', type: 'check', value: !t.points, show: x => x.kind !== 'country' && !!t.points },
+    { k: 'redraw', label: 'Popraw narysowany obszar na mapie', type: 'check', value: false, show: x => x.kind !== 'country' && t.kind === 'area' },
     { k: 'controller', label: 'Kontroluje teraz', type: 'select', value: t.controller, options: cOpts, req: true },
     { k: 'previous', label: 'Poprzedni właściciel', type: 'select', value: t.previous || (t.previousName ? 'npc:' + t.previousName : ''), options: [['', '— auto —'], ...cOpts, ...names.filter(n => !byIso(n.isoN)).map(n => ['npc:' + n.name, `${npcOf(n.isoN)?.flag || '🏳️'} ${n.name} (NPC)`])] },
     { k: 'status', label: 'Status', type: 'select', value: t.status || 'occupied', options: Object.entries(TERR_STATUS) },
@@ -445,26 +456,25 @@ export async function conquer(t = {}) {
   if (!v) return;
   if (v.kind !== 'area' && !v.isoN) return toast('Wybierz terytorium', 'err');
   const part = v.kind === 'part'; if (part) v.kind = 'area';
-  let points = t.points || null;
-  if (v.kind === 'area' && (v.redraw || !points || (part && t.clipIso !== v.isoN))) {
-    if (part) focusCountry(v.isoN);
-    toast(part ? 'Obrysuj zajętą część — granice kraju zostaną dopasowane same' : 'Obrysuj teren na mapie i kliknij „Zakończ”', 'info');
-    hideModals(true); points = await drawArea(); hideModals(false);
-    if (!points) return toast('Nie narysowano obszaru — anulowano', 'info');
+  const sameClip = !part || t.clipIso === v.isoN;
+  let shape = t.kind === 'area' && sameClip ? areaGeo(t) : null;
+  if (v.kind === 'area' && (v.redraw || !shape?.length)) {
+    if (part) focusCountry(v.isoN); else if (shape?.length) { const c = shapeCenter(shape); c && flyTo(c.lat, c.lon, 5); }
+    hideModals(true); shape = await drawArea({ clipIso: part ? v.isoN : null, initial: shape?.length ? shape : null }); hideModals(false);
+    if (!shape?.length) return toast('Nie zaznaczono żadnego terenu — anulowano', 'info');
   }
-  if (part && !clipToCountry(points, v.isoN)?.length) return toast('Narysowany obszar nie zachodzi na wybrane państwo', 'err');
   const partOf = part ? names.find(n => n.isoN === v.isoN)?.name || '' : '';
   const label = v.kind === 'country' ? (names.find(n => n.isoN === v.isoN)?.name || v.isoN) : (v.label || (part ? `Część: ${partOf}` : 'Zajęty obszar'));
   const npc = v.previous.startsWith('npc:') ? v.previous.slice(4) : '';
   const previous = (!npc && v.previous) || (v.kind === 'country' || part ? byIso(v.isoN)?.id : '') || null;
   const previousName = previous ? '' : npc || (v.kind === 'country' ? label : partOf);
   const id = t.id || (v.kind === 'country' ? 'iso' + v.isoN : newId());
-  const doc = { kind: v.kind, isoN: v.kind === 'country' ? v.isoN : null, points: v.kind === 'area' ? points : null, clipIso: part ? v.isoN : null, label, controller: v.controller, previous, previousName, status: v.status, since: t.since || gameNow(), turn: t.turn || turn() };
-  const verb = { occupied: 'forces take control of', annexed: 'annexes', contested: 'forces clash over' }[v.status];
-  const head = `⚔️ ${cFlag(v.controller)} ${v.status === 'annexed' ? cName(v.controller) : cDem(v.controller)} ${verb} ${part && !v.label ? 'part of ' + partOf : label}`;
+  const doc = { kind: v.kind, isoN: v.kind === 'country' ? v.isoN : null, geo: v.kind === 'area' ? JSON.stringify(shape) : null, points: null, clipIso: part ? v.isoN : null, label, controller: v.controller, previous, previousName, status: v.status, since: t.since || gameNow(), turn: t.turn || turn() };
+  const verb = { occupied: 'przejmuje kontrolę:', annexed: 'anektuje:', contested: 'walczy o:' }[v.status];
+  const head = `⚔️ ${cFlag(v.controller)} ${cName(v.controller)} ${verb} ${part && !v.label ? partOf + ' (część)' : label}`;
   await run(t.id ? 'UPDATE_TERRITORY' : 'CONQUEST', `${cName(v.controller)} → ${label}`, w => {
     w.set('territories/' + id, doc);
-    const at = points ? points[0] : null;
+    const at = v.kind === 'area' ? shapeCenter(shape) : null;
     if (v.news) w.set('news/' + newId(), { headline: head, body: '', category: 'Conflict', reliability: 'Confirmed', breaking: true, countries: [v.controller, previous].filter(Boolean), gameTime: gameNow(), createdAt: now(), audienceAll: true, audience: [], source: 'gm', place: at ? { name: label, lat: at.lat, lon: at.lon } : null });
     if (v.chron) w.set('history/' + newId(), { turn: turn(), gameTime: gameNow(), text: head.replace(/^⚔️ \S+ /, '') + '.', countries: [v.controller, previous].filter(Boolean), createdAt: now() });
   });
@@ -472,7 +482,7 @@ export async function conquer(t = {}) {
 async function liberate(t) {
   const v = await form(`🕊️ ${t.label} wraca do ${prevLabel(t) || 'pierwotnego właściciela'}`, [{ k: 'news', label: 'Ogłoś w newsach', type: 'check', value: true }, { k: 'chron', label: 'Dodaj do kroniki', type: 'check', value: true }], { submit: 'Zwróć teren' });
   if (!v) return;
-  const head = `🕊️ ${cDem(t.controller)} forces withdraw from ${t.label}`;
+  const head = `🕊️ ${cName(t.controller)} wycofuje wojska: ${t.label}`;
   await run('LIBERATE_TERRITORY', t.label, w => {
     w.del('territories/' + t.id);
     if (v.news) w.set('news/' + newId(), { headline: head, body: '', category: 'Conflict', reliability: 'Confirmed', breaking: false, countries: [t.controller, t.previous].filter(Boolean), gameTime: gameNow(), createdAt: now(), audienceAll: true, audience: [], source: 'gm' });

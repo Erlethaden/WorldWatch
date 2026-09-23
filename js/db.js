@@ -1,5 +1,9 @@
 // Warstwa danych: Firestore (produkcja) albo DEMO (lokalnie, localStorage — do testów bez Firebase)
-import { FIREBASE_CONFIG } from './firebase-config.js';
+// Import „*”, żeby starszy firebase-config.js (bez CARTO_KEY, z dawnym GM_UIDS) nie wywracał całej aplikacji.
+import * as CFG from './firebase-config.js';
+const FIREBASE_CONFIG = CFG.FIREBASE_CONFIG || {};
+export const ADMIN_UIDS = CFG.ADMIN_UIDS || CFG.GM_UIDS || [];
+export const CARTO_KEY = CFG.CARTO_KEY || '';
 
 const FB = 'https://www.gstatic.com/firebasejs/10.12.4/';
 export const isDemo = new URLSearchParams(location.search).has('demo') || !FIREBASE_CONFIG.apiKey || FIREBASE_CONFIG.apiKey.startsWith('WKLEJ');

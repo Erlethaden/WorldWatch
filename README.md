@@ -62,6 +62,12 @@ Bezpieczne kategorie sprzątają się same raz na dobę, gdy admin jest online (
 
 **Podbój** (GM → ⚔️ Terytoria albo ＋ Wydarzenie → ⚔️ Podbój terenu): pod kontrolę innego państwa przechodzi całe państwo, część państwa (rysujesz obszar, a aplikacja sama przycina go do granic tego kraju) albo dowolny narysowany obszar. Statusy: okupowane (przerywana granica), zaanektowane (pełny kolor), sporne (czerwona granica). Opcjonalnie powstaje news i wpis w kronice. 🕊️ zwraca teren poprzedniemu właścicielowi. Zająć można też państwa spoza gry (NPC). Istnieją na mapie (po najechaniu widać nazwę), ale nie mają statystyk.
 
+**Rysowanie terenu**: przytrzymaj palec/mysz i zamaluj obszar (✏️ Rysuj). 🧽 Gumka wycina fragmenty, ✋ Przesuń przesuwa mapę, ↶ cofa ostatni obrys. Przy zajęciu części państwa rysunek jest na bieżąco przycinany do jego granic. Edycja istniejącego terenu otwiera narysowany wcześniej kształt.
+
+**Własne obrazki**: w polach „Zdjęcie” (gazeta, grafika wydarzenia, wiadomość, awatar postaci) jest przycisk 📁 Z komputera. Plik jest zmniejszany do JPG (< ok. 850 KB) i trzymany w bazie (kolekcja `images`). Nieużywane obrazki usuwa admin w System → Porządki.
+
+**Wyszukiwanie**: dłuższe listy (np. państwa do podboju, wybór kraju) mają pole 🔎 szukaj — polskie znaki nie są wymagane (wpisz „polska” albo „pol”).
+
 ## 6. Gracze
 
 - Gracz wchodzi na stronę i loguje się (Google albo e-mail + hasło). Trafia do listy **oczekujących**.

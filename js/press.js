@@ -1,17 +1,17 @@
 // Generator gazet (sekcja 39) i grafik wydarzeń (sekcja 40) — render HTML → PNG (html2canvas)
-import { S, run, now, newId, gameNow, turn, realGM, cFlag, cName, cDem, country, countriesSorted, NEWS_CATS, G } from './store.js';
-import { h, modal, toast, esc } from './ui.js';
+import { S, run, now, newId, gameNow, turn, realGM, cFlag, cName, cDem, country, countriesSorted, NEWS_CATS, G, tr, trOpts } from './store.js';
+import { h, modal, toast, esc, img, hooks } from './ui.js';
 
 export const PAPER_STYLES = {
-  modern: { pl: 'Współczesna gazeta', outlet: c => `The ${cap(c)} Herald` },
-  tabloid: { pl: 'Tabloid', outlet: c => `${cDem(c).toUpperCase()} EXPRESS` },
-  economic: { pl: 'Gazeta ekonomiczna', outlet: c => `The ${cap(c)} Economic Review` },
-  military: { pl: 'Gazeta wojskowa', outlet: c => `${cDem(c)} Defence Journal` },
-  state: { pl: 'Gazeta państwowa', outlet: c => `${cDem(c)} National Voice` },
-  local: { pl: 'Lokalna gazeta', outlet: c => `${cap(c)} Evening Courier` },
-  opposition: { pl: 'Gazeta opozycyjna', outlet: c => `Free ${cName(c)}` },
-  foreign: { pl: 'Gazeta zagraniczna', outlet: () => 'The World Observer' },
-  retro: { pl: 'Historyczna / retro', outlet: c => `The ${cap(c)} Chronicle` }
+  modern: { pl: 'Współczesna gazeta', outlet: c => `Kurier Codzienny · ${cName(c)}` },
+  tabloid: { pl: 'Tabloid', outlet: c => `SUPER EXPRESS · ${cName(c).toUpperCase()}` },
+  economic: { pl: 'Gazeta ekonomiczna', outlet: c => `Gazeta Gospodarcza · ${cName(c)}` },
+  military: { pl: 'Gazeta wojskowa', outlet: c => `Przegląd Obronny · ${cName(c)}` },
+  state: { pl: 'Gazeta państwowa', outlet: c => `Głos Narodu · ${cName(c)}` },
+  local: { pl: 'Lokalna gazeta', outlet: c => `Kurier Wieczorny · ${cap(c)}` },
+  opposition: { pl: 'Gazeta opozycyjna', outlet: c => `Wolne Słowo · ${cName(c)}` },
+  foreign: { pl: 'Gazeta zagraniczna', outlet: () => 'Obserwator Świata' },
+  retro: { pl: 'Historyczna / retro', outlet: c => `Kronika Dawna · ${cName(c)}` }
 };
 const cap = c => country(c)?.capital?.name || cName(c);
 const FLAGIMG = c => { const iso = country(c)?.iso2; return iso ? `https://flagcdn.com/w80/${iso.toLowerCase()}.png` : null; };
@@ -21,25 +21,25 @@ const flagEl = (c, cls = 'fl') => { const u = FLAGIMG(c); const emo = () => h('s
 export function renderPaper(p) {
   const d = p.date ?? gameNow();
   return h('div.paper.st-' + (p.style || 'modern'),
-    h('div.masthead', h('div.mh-side', p.style === 'tabloid' ? 'ONLY' : `No. ${p.issue || 1}`), h('div.mh-name', p.outlet || 'The Herald'), h('div.mh-side', p.price || '')),
-    h('div.dateline', h('span', G.fmtDate(d)), h('span', (p.category || '').toUpperCase()), h('span', `${p.city || ''}${p.style === 'state' ? ' · OFFICIAL EDITION' : ''}`)),
+    h('div.masthead', h('div.mh-side', p.style === 'tabloid' ? 'TYLKO U NAS' : `Nr ${p.issue || 1}`), h('div.mh-name', p.outlet || 'Kurier'), h('div.mh-side', p.price || '')),
+    h('div.dateline', h('span', G.fmtDate(d)), h('span', tr('news', p.category || '').toUpperCase()), h('span', `${p.city || ''}${p.style === 'state' ? ' · WYDANIE OFICJALNE' : ''}`)),
     h('div.paper-body',
-      h('h1.p-head', p.headline || 'HEADLINE'),
+      h('h1.p-head', p.headline || 'NAGŁÓWEK'),
       p.subheadline ? h('h2.p-sub', p.subheadline) : null,
-      h('div.p-photo', p.imageUrl ? h('img', { src: p.imageUrl, alt: '', crossOrigin: 'anonymous' }) : h('div.p-flags', (p.flags || []).map(c => flagEl(c, 'pf')))),
+      h('div.p-photo', p.imageUrl ? img(p.imageUrl, '', { crossOrigin: 'anonymous' }) : h('div.p-flags', (p.flags || []).map(c => flagEl(c, 'pf')))),
       p.caption ? h('div.p-caption', p.caption) : null,
       h('div.p-cols', h('p', h('b', `${(p.city || '').toUpperCase()}${p.city ? ' — ' : ''}`), p.body || '')),
-      p.editorial ? h('div.p-edit', h('b', p.style === 'opposition' ? 'OUR VIEW' : p.style === 'state' ? 'COMMENTARY' : 'EDITORIAL'), h('p', p.editorial)) : null),
+      p.editorial ? h('div.p-edit', h('b', p.style === 'opposition' ? 'NASZYM ZDANIEM' : p.style === 'state' ? 'KOMENTARZ' : 'OD REDAKCJI'), h('p', p.editorial)) : null),
     h('div.p-foot', h('span', `${p.outlet || ''} · ${G.fmtDate(d)}`), h('span', (p.flags || []).map(cFlag).join(' '))));
 }
 
 // ───────── render grafiki wydarzenia ─────────
-export const SCENES = { meeting: ['🤝', 'Leaders meet'], signing: ['✍️', 'Treaty signing'], launch_ship: ['🚢', 'Ship launch'], rocket: ['🚀', 'Rocket launch'], exercise: ['🎯', 'Military exercises'], speech: ['🎙️', 'Royal / state address'], protest: ['📢', 'Demonstrations'], press: ['🎤', 'Press conference'], visit: ['🛬', 'Diplomatic visit'], disaster: ['🔥', 'Disaster'], inauguration: ['🏗️', 'Project inauguration'], sport: ['🏟️', 'Sporting event'], economy: ['📈', 'Economic event'] };
+export const SCENES = { meeting: ['🤝', 'Spotkanie przywódców'], signing: ['✍️', 'Podpisanie traktatu'], launch_ship: ['🚢', 'Wodowanie okrętu'], rocket: ['🚀', 'Start rakiety'], exercise: ['🎯', 'Ćwiczenia wojskowe'], speech: ['🎙️', 'Orędzie'], protest: ['📢', 'Demonstracje'], press: ['🎤', 'Konferencja prasowa'], visit: ['🛬', 'Wizyta dyplomatyczna'], disaster: ['🔥', 'Katastrofa'], inauguration: ['🏗️', 'Otwarcie inwestycji'], sport: ['🏟️', 'Wydarzenie sportowe'], economy: ['📈', 'Wydarzenie gospodarcze'] };
 export function renderCard(c) {
   const [ic] = SCENES[c.scene] || SCENES.meeting;
   return h('div.ecard.tod-' + (c.tod || 'day') + '.st-' + (c.style || 'press') + '.grav-' + (c.gravity || 'normal'),
-    c.imageUrl ? h('img.ec-bg', { src: c.imageUrl, alt: '', crossOrigin: 'anonymous' }) : h('div.ec-scene', h('div.ec-sky'), h('div.ec-ground'), c.flagsOn !== false ? h('div.ec-poles', (c.countries || []).map(x => h('div.pole', flagEl(x, 'pflag')))) : null, h('div.ec-icon', ic), c.media ? h('div.ec-media', '📸 🎥 📸 🎥 📸') : null),
-    h('div.ec-top', c.style === 'tv' ? h('span.ec-live', '● LIVE') : h('span.ec-tag', c.style === 'official' ? 'OFFICIAL PHOTO' : c.style === 'propaganda' ? 'GLORY TO THE NATION' : 'PRESS PHOTO'), h('span', (c.countries || []).map(cFlag).join(' '))),
+    c.imageUrl ? img(c.imageUrl, '.ec-bg', { crossOrigin: 'anonymous' }) : h('div.ec-scene', h('div.ec-sky'), h('div.ec-ground'), c.flagsOn !== false ? h('div.ec-poles', (c.countries || []).map(x => h('div.pole', flagEl(x, 'pflag')))) : null, h('div.ec-icon', ic), c.media ? h('div.ec-media', '📸 🎥 📸 🎥 📸') : null),
+    h('div.ec-top', c.style === 'tv' ? h('span.ec-live', '● NA ŻYWO') : h('span.ec-tag', c.style === 'official' ? 'ZDJĘCIE OFICJALNE' : c.style === 'propaganda' ? 'CHWAŁA NARODOWI' : 'FOTO PRASA'), h('span', (c.countries || []).map(cFlag).join(' '))),
     h('div.ec-cap', h('b', c.title || ''), h('span', `${c.place || ''}${c.place ? ' · ' : ''}${G.fmtDT(c.date ?? gameNow())} UTC`), c.subtitle ? h('small', c.subtitle) : null));
 }
 
@@ -63,6 +63,12 @@ function editor(title, fields, cfg, renderFn, onPublish, fileName) {
     else if (f.type === 'textarea') el = h('textarea', { rows: f.rows || 3, value: cfg[f.k] || '' });
     else if (f.type === 'multi') el = h('div.multi', f.options.map(([v, l]) => h('label.chk', h('input', { type: 'checkbox', value: v, checked: (cfg[f.k] || []).includes(v) }), ' ', l)));
     else if (f.type === 'check') el = h('input', { type: 'checkbox', checked: cfg[f.k] !== false && !!cfg[f.k] });
+    else if (f.type === 'image') {
+      const inp = h('input', { value: cfg[f.k] ?? '', placeholder: 'link https://…' });
+      const file = h('input', { type: 'file', accept: 'image/*', hidden: true, onchange: async () => { if (!file.files[0]) return; b.textContent = '⏳'; try { inp.value = await hooks.uploadImage(file.files[0]); upd(); } catch (e) { toast('Nie udało się wgrać obrazka: ' + e.message, 'err'); } b.textContent = '📁 Z komputera'; file.value = ''; } });
+      const b = h('button.btn.sm', { type: 'button', onclick: () => file.click() }, '📁 Z komputera');
+      el = h('div.place', inp, b, file); el.value = ''; Object.defineProperty(el, 'value', { get: () => inp.value });
+    }
     else el = h('input', { type: f.type || 'text', value: cfg[f.k] ?? '' });
     el.addEventListener('input', upd); el.addEventListener('change', upd);
     inputs[f.k] = el;
@@ -81,34 +87,34 @@ function editor(title, fields, cfg, renderFn, onPublish, fileName) {
 export function newspaper(pre = {}) {
   const n = pre.newsId ? S.data.news[pre.newsId] : null;
   const c0 = n?.countries?.[0] || n?.authorCountry || countriesSorted()[0]?.id;
-  const cfg = { style: 'modern', country: c0, outlet: PAPER_STYLES.modern.outlet(c0), headline: (n?.headline || '').replace(/^[\u{1F1E6}-\u{1F1FF}\s]+/u, '').toUpperCase(), subheadline: '', body: n?.body || '', category: n?.category || 'Politics', city: cap(c0), date: n?.gameTime ?? gameNow(), issue: 1000 + turn() * 7, price: '€2.50', flags: n?.countries || [c0].filter(Boolean), imageUrl: n?.imageUrl || '', caption: '', editorial: '', ...(pre.cfg || {}) };
+  const cfg = { style: 'modern', country: c0, outlet: PAPER_STYLES.modern.outlet(c0), headline: (n?.headline || '').replace(/^[\u{1F1E6}-\u{1F1FF}\s]+/u, '').toUpperCase(), subheadline: '', body: n?.body || '', category: n?.category || 'Politics', city: cap(c0), date: n?.gameTime ?? gameNow(), issue: 1000 + turn() * 7, price: '4,50 zł', flags: n?.countries || [c0].filter(Boolean), imageUrl: n?.imageUrl || '', caption: '', editorial: '', ...(pre.cfg || {}) };
   const cOpts = countriesSorted().map(c => [c.id, `${c.flag} ${c.name}`]);
   const fields = [
     { k: 'style', label: 'Styl', type: 'select', options: Object.entries(PAPER_STYLES).map(([k, s]) => [k, s.pl]) },
     { k: 'country', label: 'Gazeta z kraju (narracja)', type: 'select', options: cOpts },
     { k: 'outlet', label: 'Nazwa gazety' }, { k: 'headline', label: 'Nagłówek' }, { k: 'subheadline', label: 'Podtytuł' },
     { k: 'body', label: 'Treść artykułu', type: 'textarea', rows: 5 }, { k: 'city', label: 'Miejsce (dateline)' },
-    { k: 'category', label: 'Kategoria', type: 'select', options: NEWS_CATS.map(c => [c, c]) }, { k: 'issue', label: 'Numer wydania', type: 'number' }, { k: 'price', label: 'Cena' },
-    { k: 'flags', label: 'Flagi', type: 'multi', options: cOpts }, { k: 'imageUrl', label: 'Zdjęcie (URL, opcjonalnie)' }, { k: 'caption', label: 'Podpis zdjęcia' },
+    { k: 'category', label: 'Kategoria', type: 'select', options: trOpts('news', NEWS_CATS) }, { k: 'issue', label: 'Numer wydania', type: 'number' }, { k: 'price', label: 'Cena' },
+    { k: 'flags', label: 'Flagi', type: 'multi', options: cOpts }, { k: 'imageUrl', label: 'Zdjęcie (link albo plik z komputera)', type: 'image' }, { k: 'caption', label: 'Podpis zdjęcia' },
     { k: 'editorial', label: 'Komentarz redakcji', type: 'textarea', rows: 2 }
   ];
   let lastStyle = cfg.style, lastC = cfg.country;
   const render = c => { if (c.style !== lastStyle || c.country !== lastC) { const auto = PAPER_STYLES[lastStyle].outlet(lastC); if (!c.outlet || c.outlet === auto) { c.outlet = PAPER_STYLES[c.style].outlet(c.country); const i = document.querySelectorAll('.ed-form input')[0]; if (i) i.value = c.outlet; } lastStyle = c.style; lastC = c.country; } return renderPaper(c); };
-  editor('🗞️ GENERATE NEWSPAPER', fields, cfg, render, (c, aud) => publish({ headline: `${c.outlet}: ${c.headline}`, paper: { ...c }, countries: c.flags, category: c.category, place: null }, aud, pre.newsId), () => `gazeta-${(cfg.outlet || 'paper').replace(/\W+/g, '-')}.png`);
+  editor('🗞️ Generator gazety', fields, cfg, render, (c, aud) => publish({ headline: `${c.outlet}: ${c.headline}`, paper: { ...c }, countries: c.flags, category: c.category, place: null }, aud, pre.newsId), () => `gazeta-${(cfg.outlet || 'paper').replace(/\W+/g, '-')}.png`);
 }
 
 export function eventCard(pre = {}) {
   const n = pre.newsId ? S.data.news[pre.newsId] : null;
   const cfg = { scene: 'meeting', title: n?.headline?.replace(/^[\u{1F1E6}-\u{1F1FF}\s]+/u, '') || '', subtitle: '', countries: n?.countries || [], place: n?.place?.name || '', tod: 'day', style: 'press', gravity: 'normal', flagsOn: true, media: true, imageUrl: n?.imageUrl || '', date: n?.gameTime ?? gameNow() };
   const cOpts = countriesSorted().map(c => [c.id, `${c.flag} ${c.name}`]);
-  editor('🖼️ EVENT → GENERATE IMAGE', [
+  editor('🖼️ Wydarzenie → grafika', [
     { k: 'scene', label: 'Scena', type: 'select', options: Object.entries(SCENES).map(([k, [i, l]]) => [k, `${i} ${l}`]) },
     { k: 'title', label: 'Tytuł / podpis' }, { k: 'subtitle', label: 'Dopisek' }, { k: 'countries', label: 'Państwa (flagi)', type: 'multi', options: cOpts }, { k: 'place', label: 'Miejsce' },
     { k: 'tod', label: 'Pora dnia', type: 'select', options: [['dawn', 'Świt'], ['day', 'Dzień'], ['dusk', 'Zmierzch'], ['night', 'Noc']] },
-    { k: 'style', label: 'Styl', type: 'select', options: [['press', 'Zdjęcie prasowe'], ['official', 'Oficjalne'], ['tv', 'Relacja TV (LIVE)'], ['propaganda', 'Propagandowe'], ['doc', 'Dokumentalne (sepia)']] },
+    { k: 'style', label: 'Styl', type: 'select', options: [['press', 'Zdjęcie prasowe'], ['official', 'Oficjalne'], ['tv', 'Relacja TV (NA ŻYWO)'], ['propaganda', 'Propagandowe'], ['doc', 'Dokumentalne (sepia)']] },
     { k: 'gravity', label: 'Poziom powagi', type: 'select', options: [['light', 'Lekki'], ['normal', 'Normalny'], ['grave', 'Poważny'], ['crisis', 'Kryzys']] },
     { k: 'flagsOn', label: 'Flagi w kadrze', type: 'check' }, { k: 'media', label: 'Obecność mediów', type: 'check' },
-    { k: 'imageUrl', label: 'Własne zdjęcie (URL) — zastępuje scenę' }
+    { k: 'imageUrl', label: 'Własne zdjęcie — zastępuje scenę', type: 'image' }
   ], cfg, renderCard, (c, aud) => publish({ headline: c.title || SCENES[c.scene][1], card: { ...c }, countries: c.countries, category: 'Politics' }, aud, pre.newsId), () => `wydarzenie-${Date.now()}.png`);
 }
 

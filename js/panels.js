@@ -1,8 +1,8 @@
 // Panele boczne: Feed, Kraj, Dyplomacja, Wywiad, Kronika
 import { S, G, run, now, newId, gameNow, turn, realGM, isAdmin, myCountry, persp, gmView, canEdit, feedItems, unitViews, statusOf,
   cFlag, cName, cDem, cColor, country, countriesSorted, userOfCountry, charView, charsOf, charLocation, writeChar,
-  STATS, NEWS_CATS, RELIABILITY, RELATIONS, REL_COLOR, TREATY_TYPES, KINDS, VIS } from './store.js';
-import { h, esc, form, modal, confirmBox, toast, chip, kv, download } from './ui.js';
+  STATS, NEWS_CATS, RELIABILITY, RELATIONS, REL_COLOR, TREATY_TYPES, tr, trOpts, statusChip, KINDS, VIS } from './store.js';
+import { h, esc, form, modal, confirmBox, toast, chip, kv, download, img, searchable } from './ui.js';
 import { select } from './map.js';
 import * as U from './units.js';
 import * as P from './press.js';
@@ -10,7 +10,9 @@ import { GM, customFields } from './gm.js';
 
 const goTab = t => window.dispatchEvent(new CustomEvent('ww:tab', { detail: t }));
 const ctxCountry = () => { const p = persp(); return p && p !== 'gm' ? p : null; };
-const relBadge = r => h('span.rel', { style: { '--c': REL_COLOR[r] || '#888' } }, r || 'Neutral');
+const relBadge = r => h('span.rel', { style: { '--c': REL_COLOR[r] || '#888' } }, tr('relation', r || 'Neutral'));
+const TSTAT = { active: 'obowiązuje', proposed: 'proponowany', ended: 'wygasł' };
+const PSTAT = { pending: 'OCZEKUJE', accepted: 'PRZYJĘTA', rejected: 'ODRZUCONA', countered: 'KONTRPROPOZYCJA', sent: '' };
 const relKey = (a, b) => [a, b].sort().join('__');
 export const relationOf = (a, b) => S.data.relations[relKey(a, b)]?.status || 'Neutral';
 export const withFlags = n => /^[\u{1F1E6}-\u{1F1FF}]/u.test(n.headline || '') ? n.headline : `${(n.countries || []).map(cFlag).join('')} ${n.headline}`.trim();
@@ -24,8 +26,8 @@ const feed = {
     const unread = S.unread?.size || 0;
     return h('div.feed',
       h('div.feed-head', h('div', h('h2', '🌍 WORLDWATCH'), h('div.muted', unread ? h('span.new', `🔴 ${unread} NEW EVENTS`) : `${G.fmtDT(gameNow())} UTC`)),
-        h('div.btn-row', realGM() ? [h('button.btn.sm.primary', { onclick: () => feed.create('news') }, '🔴 News'), h('button.btn.sm', { onclick: () => feed.create('paper') }, '🗞️'), h('button.btn.sm', { onclick: () => feed.create('card') }, '🖼️')] : myCountry() ? h('button.btn.sm', { onclick: () => feed.create('statement') }, '📢 Oświadczenie') : null)),
-      h('div.filters', [['all', 'Wszystko'], ['news', 'News'], ['move', 'Ruchy'], ['intel', 'Wywiad / prywatne']].map(([k, l]) => h('button.chip' + (feedFilter === k ? '.on' : ''), { onclick: () => { feedFilter = k; goTab('feed'); } }, l))),
+        h('div.btn-row', realGM() ? [h('button.btn.sm.primary', { onclick: () => feed.create('news') }, '🔴 Wiadomość'), h('button.btn.sm', { onclick: () => feed.create('paper') }, '🗞️'), h('button.btn.sm', { onclick: () => feed.create('card') }, '🖼️')] : myCountry() ? h('button.btn.sm', { onclick: () => feed.create('statement') }, '📢 Oświadczenie') : null)),
+      h('div.filters', [['all', 'Wszystko'], ['news', 'Wiadomości'], ['move', 'Ruchy'], ['intel', 'Wywiad / prywatne']].map(([k, l]) => h('button.chip' + (feedFilter === k ? '.on' : ''), { onclick: () => { feedFilter = k; goTab('feed'); } }, l))),
       items.length ? items.map(feedItem) : h('div.empty', 'Cisza w eterze. Jeszcze nic się nie wydarzyło.'));
   },
   create(kind) {
@@ -40,12 +42,12 @@ function feedItem(i) {
   if (i.type === 'news') {
     const n = i.news, leak = ['Unverified', 'Rumor', 'False information'].includes(n.reliability);
     return h('article.news' + (n.breaking ? '.breaking' : '') + (unread ? '.unread' : '') + (i.future ? '.future' : ''), { onclick: () => openNews(n.id) },
-      h('div.news-top', n.breaking ? h('span.brk', '🔴 BREAKING') : leak ? h('span.leak', n.leak ? '🔴 UNVERIFIED LEAK' : '⚠ UNVERIFIED') : h('span.cat', n.category || 'News'),
-        n.official ? chip('OFFICIAL STATEMENT', 'off') : null, i.future ? chip('⏳ zaplanowane ' + G.fmtDT(n.gameTime), 'warn') : null, !n.audienceAll ? chip('🔒 ' + (n.audience || []).map(cFlag).join(''), 'priv') : null,
+      h('div.news-top', n.breaking ? h('span.brk', '🔴 PILNE') : leak ? h('span.leak', n.leak ? '🔴 NIEPOTWIERDZONY PRZECIEK' : '⚠ NIEPOTWIERDZONE') : h('span.cat', tr('news', n.category) || 'Wiadomość'),
+        n.official ? chip('OFICJALNE OŚWIADCZENIE', 'off') : null, i.future ? chip('⏳ zaplanowane ' + G.fmtDT(n.gameTime), 'warn') : null, !n.audienceAll ? chip('🔒 ' + (n.audience || []).map(cFlag).join(''), 'priv') : null,
         h('time', G.fmtDT(n.gameTime))),
       h('h4', withFlags(n)),
       n.body ? h('p', n.body.length > 220 ? n.body.slice(0, 220) + '…' : n.body) : null,
-      h('div.news-foot', n.reliability ? h('span.relia.' + (relClass[n.reliability] || ''), `Reliability: ${n.reliability}${n.reliabilityPct != null ? ' · ' + n.reliabilityPct + '%' : ''}`) : null, n.paper ? chip('🗞️ ' + (n.paper.outlet || 'Front page')) : null, n.card ? chip('🖼️ grafika') : null));
+      h('div.news-foot', n.reliability ? h('span.relia.' + (relClass[n.reliability] || ''), `Wiarygodność: ${tr('reliability', n.reliability)}${n.reliabilityPct != null ? ' · ' + n.reliabilityPct + '%' : ''}`) : null, n.paper ? chip('🗞️ ' + (n.paper.outlet || 'Pierwsza strona')) : null, n.card ? chip('🖼️ grafika') : null));
   }
   return h('div.fitem.' + i.type + (unread ? '.unread' : '') + (i.important ? '.imp' : ''), { onclick: () => i.unitKey ? select(i.unitKey, true) : i.type === 'msg' ? (diplo.openChannel(i.from), goTab('diplo')) : null },
     h('span.ic', i.icon), h('span.tx', i.text), h('time', G.fmtTime(i.t)));
@@ -57,14 +59,14 @@ export async function newsForm(n, statement) {
   const cOpts = countriesSorted().map(c => [c.id, `${c.flag} ${c.name}`]);
   const truth = gm ? S.data.gmNotes['news_' + n.id]?.truth : null;
   const v = await form(statement ? `📢 Oświadczenie — ${cFlag(C)} ${cName(C)}` : isNew ? '🔴 Nowa wiadomość' : 'Edycja wiadomości', [
-    { k: 'headline', label: 'Nagłówek', value: n.headline, req: true, full: true, ph: 'Sweden announces major naval expansion' },
+    { k: 'headline', label: 'Nagłówek', value: n.headline, req: true, full: true, ph: 'Szwecja zapowiada rozbudowę marynarki wojennej' },
     { k: 'body', label: 'Treść', type: 'textarea', value: n.body, rows: 4, full: true },
-    { k: 'category', label: 'Kategoria', type: 'select', value: n.category, options: NEWS_CATS },
+    { k: 'category', label: 'Kategoria', type: 'select', value: n.category, options: trOpts('news', NEWS_CATS) },
     ...(gm ? [
-      { k: 'reliability', label: 'Wiarygodność (widoczna dla graczy)', type: 'select', value: n.reliability, options: RELIABILITY },
+      { k: 'reliability', label: 'Wiarygodność (widoczna dla graczy)', type: 'select', value: n.reliability, options: trOpts('reliability', RELIABILITY) },
       { k: 'reliabilityPct', label: 'Wiarygodność %', type: 'number', value: n.reliabilityPct, help: 'opcjonalnie, np. 32' },
       { k: 'leak', label: 'Oznacz jako przeciek (LEAK)', type: 'check', value: n.leak },
-      { k: 'breaking', label: 'BREAKING NEWS', type: 'check', value: n.breaking },
+      { k: 'breaking', label: 'PILNA WIADOMOŚĆ (breaking)', type: 'check', value: n.breaking },
       { k: 'truth', label: 'Prawda (tylko GM)', type: 'select', value: truth || 'true', options: [['true', 'Prawdziwa'], ['partial', 'Częściowo prawdziwa'], ['false', 'Fałszywa / dezinformacja']] },
       { k: 'countries', label: 'Dotyczy państw', type: 'multi', value: n.countries, options: cOpts },
       { k: 'audienceAll', label: 'Widoczne dla wszystkich', type: 'check', value: n.audienceAll },
@@ -73,7 +75,7 @@ export async function newsForm(n, statement) {
       { k: 'chronicle', label: 'Dodaj do kroniki świata', type: 'check', value: false, show: () => isNew }
     ] : []),
     { k: 'place', label: 'Miejsce (pinezka na mapie)', type: 'place', value: n.place },
-    { k: 'imageUrl', label: 'Obraz (URL, opcjonalnie)', value: n.imageUrl }
+    { k: 'imageUrl', label: 'Obraz (opcjonalnie)', type: 'image', value: n.imageUrl, full: true }
   ], { wide: true, submit: isNew ? 'Publikuj' : 'Zapisz' });
   if (!v) return;
   const id = n.id || newId();
@@ -91,11 +93,11 @@ export async function newsForm(n, statement) {
 export function openNews(id) {
   const n = S.data.news[id]; if (!n) return;
   const gm = realGM(), truth = gm ? S.data.gmNotes['news_' + id]?.truth : null;
-  const m = modal(n.breaking ? '🔴 BREAKING NEWS' : n.category || 'News', h('div.article',
+  const m = modal(n.breaking ? '🔴 PILNA WIADOMOŚĆ' : tr('news', n.category) || 'Wiadomość', h('div.article',
     n.paper ? h('div.paper-wrap', P.renderPaper(n.paper)) : null,
     n.card ? h('div.paper-wrap', P.renderCard(n.card)) : null,
-    !n.paper ? [h('h2', withFlags(n)), h('div.muted', `${G.fmtDT(n.gameTime)} UTC · ${n.category || ''}`), n.imageUrl ? h('img.news-img', { src: n.imageUrl, alt: '' }) : null, n.body ? h('p', n.body) : null] : null,
-    h('div.news-foot', n.reliability ? h('span.relia.' + (relClass[n.reliability] || ''), `Reliability: ${n.reliability}${n.reliabilityPct != null ? ' · ' + n.reliabilityPct + '%' : ''}`) : null, n.official ? chip('OFFICIAL STATEMENT — ' + cName(n.authorCountry), 'off') : null),
+    !n.paper ? [h('h2', withFlags(n)), h('div.muted', `${G.fmtDT(n.gameTime)} UTC · ${tr('news', n.category)}`), n.imageUrl ? img(n.imageUrl, '.news-img') : null, n.body ? h('p', n.body) : null] : null,
+    h('div.news-foot', n.reliability ? h('span.relia.' + (relClass[n.reliability] || ''), `Wiarygodność: ${tr('reliability', n.reliability)}${n.reliabilityPct != null ? ' · ' + n.reliabilityPct + '%' : ''}`) : null, n.official ? chip('OFICJALNE OŚWIADCZENIE — ' + cName(n.authorCountry), 'off') : null),
     gm ? h('div.gm-box', h('b', 'GM: '), `prawda: ${truth === 'false' ? '❌ fałsz' : truth === 'partial' ? '◐ częściowo' : '✅ prawda'} · widzą: ${n.audienceAll ? 'wszyscy' : (n.audience || []).map(cName).join(', ')}`) : null,
     h('div.btn-row.wrap',
       n.place ? h('button.btn.sm', { onclick: () => { m.close(); import('./map.js').then(M => M.flyTo(n.place.lat, n.place.lon, 6)); } }, '📍 Na mapie') : null,
@@ -128,7 +130,7 @@ function dashboard(cid) {
   return h('div.dash',
     h('div.dash-head', { style: { '--c': c.color } }, h('span.bigflag', c.flag), h('div', h('h2', (c.official || c.name).toUpperCase()), h('div.muted', `Capital: ${c.capital?.name || '—'} · Players: ${players.map(p => p.displayName).join(', ') || 'NPC'}`)),
       gm ? h('div.btn-col', h('button.btn.sm', { onclick: () => GM.editCountry(cid) }, '✏️ Profil'), h('button.btn.sm', { onclick: () => GM.editStats(cid) }, '📊 Statystyki')) : null),
-    h('section', h('h3', 'Government'), kv('Tag', c.tag || c.iso2 || '—'), kv('Ustrój', g.system || '—'), kv('Partia rządząca', g.rulingParty || '—'), kv(g.headTitle || 'Głowa państwa', g.head || '—'), kv('Szef rządu', g.headOfGov || '—')),
+    h('section', h('h3', 'Władze'), kv('Tag', c.tag || c.iso2 || '—'), kv('Ustrój', g.system || '—'), kv('Partia rządząca', g.rulingParty || '—'), kv(g.headTitle || 'Głowa państwa', g.head || '—'), kv('Szef rządu', g.headOfGov || '—')),
     !priv ? h('section', h('p.muted', '🔒 Statystyki tego państwa są niejawne.')) : null,
     [...STATS, ['Inne', []]].map(([title, fields]) => {
       // pola standardowe + własne pola admina (jawne z profilu państwa, niejawne z części prywatnej)
@@ -136,10 +138,10 @@ function dashboard(cid) {
         ...customFields().filter(f => f.section === title && (f.public || priv)).map(f => [f.label, (f.public ? c.custom?.[f.key] : priv?.custom?.[f.key]) ?? '—'])];
       return rows.length ? h('section', h('h3', title), h('div.stat-grid', rows.map(([l, v]) => h('div.stat', h('small', l), h('b', String(v)))))) : null;
     }),
-    priv ? h('section', h('h3', 'Intelligence'), kv('Intelligence level', `${priv.intelLevel || '—'}/5`)) : null,
-    h('section', h('h3', 'Diplomacy'),
+    priv ? h('section', h('h3', 'Wywiad'), kv('Poziom wywiadu', `${priv.intelLevel || '—'}/5`)) : null,
+    h('section', h('h3', 'Dyplomacja'),
       h('div.rel-list', countriesSorted().filter(o => o.id !== cid).map(o => { const r = relationOf(cid, o.id); return r === 'Neutral' ? null : h('div.rel-row', `${o.flag} ${o.name}`, relBadge(r)); })),
-      h('div.treaty-mini', Object.values(S.data.treaties).filter(t => (t.parties || []).includes(cid) && t.status !== 'ended').map(t => h('div', `${t.secret ? '🔒 ' : '📜 '}${t.name} — ${t.parties.map(cFlag).join('')} (${t.status})`)))),
+      h('div.treaty-mini', Object.values(S.data.treaties).filter(t => (t.parties || []).includes(cid) && t.status !== 'ended').map(t => h('div', `${t.secret ? '🔒 ' : '📜 '}${t.name} — ${t.parties.map(cFlag).join('')} (${TSTAT[t.status] || t.status})`)))),
     priv ? projectsSection(cid, priv, mine) : null,
     territorySection(cid),
     charsSection(cid, mine),
@@ -150,24 +152,24 @@ function dashboard(cid) {
 function projectsSection(cid, priv, mine) {
   const projects = priv.projects || [];
   const save = (list, label) => run('UPDATE_PROJECTS', `${cName(cid)} ${label}`, w => w.merge('countryPrivate/' + cid, { projects: list }));
-  return h('section', h('h3', 'Projects'),
+  return h('section', h('h3', 'Projekty narodowe'),
     projects.length ? projects.map((p, idx) => {
       const done = (p.phases || []).filter(x => x.done).length, tot = (p.phases || []).length, pct = tot ? Math.round(done / tot * 100) : (p.progress || 0);
       return h('div.project', h('div.pj-head', h('b', `${p.secrecy === 'Secret' ? '🔒 ' : ''}${p.name}`), h('span.muted', `${pct}%`), mine ? h('span.pj-actions', h('button.btn.xs', { onclick: () => projectForm(cid, p, idx) }, '✏️'), h('button.btn.xs', { onclick: async () => { if (await confirmBox(`Usunąć projekt ${p.name}?`, { danger: true })) save(projects.filter((_, i) => i !== idx), 'delete'); } }, '🗑')) : null),
         h('div.pbar', h('div', { style: { width: pct + '%' } })),
         p.desc ? h('p.muted', p.desc) : null,
-        h('div.phases', (p.phases || []).map((ph, j) => h('label.phase' + (ph.done ? '.done' : ''), h('input', { type: 'checkbox', checked: !!ph.done, disabled: !mine, onchange: e => { const list = structuredClone(projects); list[idx].phases[j].done = e.target.checked; save(list, `${p.name}: ${ph.name}`); } }), ` Phase ${roman(j + 1)} — ${ph.name}`))),
-        h('div.pj-meta', [['Cost', p.cost], ['Duration', p.duration], ['Requirements', p.requirements], ['Effects', p.effects], ['Risk', p.risk], ['Secrecy', p.secrecy]].filter(x => x[1]).map(([k, v]) => h('span', h('small', k + ': '), v))));
+        h('div.phases', (p.phases || []).map((ph, j) => h('label.phase' + (ph.done ? '.done' : ''), h('input', { type: 'checkbox', checked: !!ph.done, disabled: !mine, onchange: e => { const list = structuredClone(projects); list[idx].phases[j].done = e.target.checked; save(list, `${p.name}: ${ph.name}`); } }), ` Faza ${roman(j + 1)} — ${ph.name}`))),
+        h('div.pj-meta', [['Koszt', p.cost], ['Czas', p.duration], ['Wymagania', p.requirements], ['Efekty', p.effects], ['Ryzyko', tr('risk', p.risk)], ['Tajność', tr('secrecy', p.secrecy)]].filter(x => x[1]).map(([k, v]) => h('span', h('small', k + ': '), v))));
     }) : h('p.muted', 'Brak projektów.'),
     mine ? h('button.btn.sm', { onclick: () => projectForm(cid) }, '+ Nowy projekt') : null);
 }
 const roman = n => ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'][n - 1] || n;
 async function projectForm(cid, p = {}, idx = -1) {
   const v = await form(idx < 0 ? 'Nowy projekt narodowy' : `Projekt: ${p.name}`, [
-    { k: 'name', label: 'Nazwa', value: p.name, req: true, ph: 'PROJECT VASA' }, { k: 'desc', label: 'Opis', type: 'textarea', value: p.desc },
-    { k: 'phases', label: 'Fazy (jedna na linię)', type: 'textarea', rows: 6, value: (p.phases || []).map(x => x.name).join('\n'), ph: 'Economic modernization\nIndustrial expansion\nNaval modernization' },
+    { k: 'name', label: 'Nazwa', value: p.name, req: true, ph: 'PROJEKT WAZA' }, { k: 'desc', label: 'Opis', type: 'textarea', value: p.desc },
+    { k: 'phases', label: 'Fazy (jedna na linię)', type: 'textarea', rows: 6, value: (p.phases || []).map(x => x.name).join('\n'), ph: 'Modernizacja gospodarki\nRozbudowa przemysłu\nModernizacja marynarki' },
     { k: 'cost', label: 'Koszt', value: p.cost }, { k: 'duration', label: 'Czas trwania', value: p.duration }, { k: 'requirements', label: 'Wymagania', value: p.requirements },
-    { k: 'effects', label: 'Efekty', value: p.effects }, { k: 'risk', label: 'Ryzyko', type: 'select', value: p.risk || 'Low', options: ['Low', 'Medium', 'High', 'Extreme'] }, { k: 'secrecy', label: 'Tajność', type: 'select', value: p.secrecy || 'Public', options: ['Public', 'Restricted', 'Secret'] }
+    { k: 'effects', label: 'Efekty', value: p.effects }, { k: 'risk', label: 'Ryzyko', type: 'select', value: p.risk || 'Low', options: trOpts('risk', ['Low', 'Medium', 'High', 'Extreme']) }, { k: 'secrecy', label: 'Tajność', type: 'select', value: p.secrecy || 'Public', options: trOpts('secrecy', ['Public', 'Restricted', 'Secret']) }
   ], { wide: true });
   if (!v) return;
   const old = p.phases || [];
@@ -185,11 +187,11 @@ function territorySection(cid) {
 }
 function charsSection(cid, mine) {
   const chars = charsOf(cid);
-  return h('section', h('h3', 'Characters'),
+  return h('section', h('h3', 'Postacie'),
     chars.length ? chars.map(c => {
       const loc = charLocation(c.id);
-      return h('div.char', h('div.avatar', c.avatar ? h('img', { src: c.avatar, alt: '' }) : c.icon || '👤'),
-        h('div.char-body', h('b', c.name), h('small', `${c.title || ''}${c.age ? ' · ' + c.age : ''}`), h('small.loc', loc ? `📍 ${loc.text}` : '📍 unknown', c.status && c.status !== 'Active' ? ` · ${c.status}` : ''), c.full && c.mission ? h('small.mission', '🎯 ' + c.mission) : null),
+      return h('div.char', h('div.avatar', c.avatar ? img(c.avatar) : c.icon || '👤'),
+        h('div.char-body', h('b', c.name), h('small', `${c.title || ''}${c.age ? ' · ' + c.age : ''}`), h('small.loc', loc ? `📍 ${loc.text}` : '📍 nieznane', c.status && c.status !== 'Active' ? ` · ${tr('charStatus', c.status)}` : ''), c.full && c.mission ? h('small.mission', '🎯 ' + c.mission) : null),
         h('div.btn-col', loc?.unit ? h('button.btn.xs', { onclick: () => select(loc.unit.key, true) }, '🗺') : null, realGM() || (mine && c.full) ? h('button.btn.xs', { onclick: () => GM.editChar(c) }, '✏️') : null));
     }) : h('p.muted', 'Brak postaci.'),
     realGM() ? h('button.btn.sm', { onclick: () => GM.editChar({ countryId: cid }) }, '+ Postać') : null);
@@ -197,7 +199,7 @@ function charsSection(cid, mine) {
 function unitsSection(cid) {
   const us = unitViews().filter(v => v.countryId === cid && v.src === 'full');
   if (!us.length) return null;
-  return h('section', h('h3', 'Assets'), us.map(v => h('div.asset', { onclick: () => select(v.key, true) }, h('span', KINDS[v.kind]?.en || v.kind), h('b', v.label), h('span.status.s-' + statusOf(v).split(' ')[0].toLowerCase(), statusOf(v)))));
+  return h('section', h('h3', 'Siły i obiekty'), us.map(v => { const st = statusChip(v); return h('div.asset', { onclick: () => select(v.key, true) }, h('span', KINDS[v.kind]?.en || v.kind), h('b', v.label), h('span.status.' + st.cls, st.text)); }));
 }
 
 // ═════════════════════════ DYPLOMACJA ═════════════════════════
@@ -210,9 +212,9 @@ const diplo = {
     const others = countriesSorted().filter(c => c.id !== me);
     const side = gm ? h('div.country-picker', h('span.muted', 'Działaj jako: '), h('select', { onchange: e => { gmSide = e.target.value || null; channel = null; goTab('diplo'); } }, h('option', { value: '' }, '— tylko podgląd GM —'), countriesSorted().map(c => h('option', { value: c.id, selected: c.id === me }, `${c.flag} ${c.name}`)))) : null;
     return h('div.diplo', side,
-      me ? h('section', h('h3', `${cFlag(me)} Relations`), h('div.rel-table', others.map(o => {
+      me ? h('section', h('h3', `${cFlag(me)} Relacje`), h('div.rel-table', others.map(o => {
         const r = relationOf(me, o.id);
-        return h('div.rel-row', h('span', `${o.flag} ${o.name}`), canEdit(me) ? h('select.rel-sel', { style: { '--c': REL_COLOR[r] }, onchange: e => setRelation(me, o.id, e.target.value) }, RELATIONS.map(x => h('option', { selected: x === r }, x))) : relBadge(r));
+        return h('div.rel-row', h('span', `${o.flag} ${o.name}`), canEdit(me) ? h('select.rel-sel', { style: { '--c': REL_COLOR[r] }, onchange: e => setRelation(me, o.id, e.target.value) }, RELATIONS.map(x => h('option', { value: x, selected: x === r }, tr('relation', x)))) : relBadge(r));
       }))) : gm ? allRelations() : null,
       treatiesSection(me),
       me ? channels(me, others) : gm ? allChannels() : null);
@@ -223,12 +225,12 @@ async function setRelation(a, b, status) {
 }
 function allRelations() {
   const rs = Object.values(S.data.relations).filter(r => r.status !== 'Neutral');
-  return h('section', h('h3', 'All relations'), rs.length ? rs.map(r => h('div.rel-row', h('span', `${cFlag(r.parties[0])} ${cName(r.parties[0])} ↔ ${cFlag(r.parties[1])} ${cName(r.parties[1])}`), h('select.rel-sel', { style: { '--c': REL_COLOR[r.status] }, onchange: e => setRelation(r.parties[0], r.parties[1], e.target.value) }, RELATIONS.map(x => h('option', { selected: x === r.status }, x))))) : h('p.muted', 'Wszyscy neutralni. Wybierz państwo powyżej, by ustawić relacje.'));
+  return h('section', h('h3', 'Wszystkie relacje'), rs.length ? rs.map(r => h('div.rel-row', h('span', `${cFlag(r.parties[0])} ${cName(r.parties[0])} ↔ ${cFlag(r.parties[1])} ${cName(r.parties[1])}`), h('select.rel-sel', { style: { '--c': REL_COLOR[r.status] }, onchange: e => setRelation(r.parties[0], r.parties[1], e.target.value) }, RELATIONS.map(x => h('option', { value: x, selected: x === r.status }, tr('relation', x)))))) : h('p.muted', 'Wszyscy neutralni. Wybierz państwo powyżej, by ustawić relacje.'));
 }
 function treatiesSection(me) {
   const list = Object.values(S.data.treaties).filter(t => !me || realGM() && !gmSide || (t.parties || []).includes(me) || !t.secret).sort((a, b) => (b.signedAt || 0) - (a.signedAt || 0));
-  return h('section', h('h3', '📜 Treaties & agreements'),
-    list.length ? list.map(t => h('div.treaty.' + (t.status || 'active'), h('div', h('b', `${t.secret ? '🔒 ' : ''}${t.name}`), h('small', ` ${t.type} · ${t.parties.map(cFlag).join(' ')} · ${t.status}${t.signedAt ? ' · ' + G.fmtDate(t.signedAt) : ''}`)), t.text ? h('p.muted', t.text) : null,
+  return h('section', h('h3', '📜 Traktaty i porozumienia'),
+    list.length ? list.map(t => h('div.treaty.' + (t.status || 'active'), h('div', h('b', `${t.secret ? '🔒 ' : ''}${t.name}`), h('small', ` ${tr('treaty', t.type)} · ${t.parties.map(cFlag).join(' ')} · ${TSTAT[t.status] || t.status}${t.signedAt ? ' · ' + G.fmtDate(t.signedAt) : ''}`)), t.text ? h('p.muted', t.text) : null,
       realGM() ? h('div.btn-row', h('button.btn.xs', { onclick: () => treatyForm(t) }, '✏️'), t.status !== 'ended' ? h('button.btn.xs', { onclick: () => run('END_TREATY', t.name, w => w.merge('treaties/' + t.id, { status: 'ended' })) }, 'zakończ') : null, isAdmin() && h('button.btn.xs.danger', { onclick: async () => { if (await confirmBox(`Usunąć traktat ${t.name}?`, { danger: true })) run('DELETE_TREATY', t.name, w => w.del('treaties/' + t.id)); } }, '🗑')) : null)) : h('p.muted', 'Brak znanych traktatów.'),
     realGM() ? h('button.btn.sm', { onclick: () => treatyForm() }, '+ Traktat (GM)') : null);
 }
@@ -237,73 +239,73 @@ async function treatyForm(t = {}) {
   const v = await form(t.id ? 'Edycja traktatu' : 'Nowy traktat', [
     { k: 'name', label: 'Nazwa', value: t.name, req: true }, { k: 'type', label: 'Typ', type: 'select', value: t.type, options: TREATY_TYPES },
     { k: 'parties', label: 'Strony', type: 'multi', value: t.parties || [], options: cOpts, req: true }, { k: 'secret', label: 'Tajny', type: 'check', value: t.secret },
-    { k: 'status', label: 'Status', type: 'select', value: t.status || 'active', options: [['active', 'active'], ['proposed', 'proposed'], ['ended', 'ended']] },
+    { k: 'status', label: 'Status', type: 'select', value: t.status || 'active', options: Object.entries(TSTAT) },
     { k: 'text', label: 'Treść / postanowienia', type: 'textarea', value: t.text }, { k: 'news', label: 'Ogłoś w newsach (jeśli jawny)', type: 'check', value: !t.id }, { k: 'chron', label: 'Dodaj do kroniki', type: 'check', value: !t.id }
   ], { wide: true });
   if (!v) return;
   const id = t.id || newId();
   await run(t.id ? 'UPDATE_TREATY' : 'CREATE_TREATY', v.name, w => {
     w.set('treaties/' + id, { name: v.name, type: v.type, parties: v.parties, secret: !!v.secret, status: v.status, text: v.text, signedAt: t.signedAt || gameNow(), createdAt: t.createdAt || now() });
-    if (v.news && !v.secret) w.set('news/' + newId(), { headline: `${v.parties.map(cFlag).join('')} ${listNames(v.parties)} sign ${v.name}`, body: v.text || '', category: 'Diplomacy', reliability: 'Confirmed', breaking: true, countries: v.parties, gameTime: gameNow(), createdAt: now(), audienceAll: true, audience: [], source: 'gm' });
-    if (v.chron) w.set('history/' + newId(), { turn: turn(), gameTime: gameNow(), text: `${listNames(v.parties)} ${v.secret ? 'secretly ' : ''}sign ${v.name} (${v.type}).`, countries: v.parties, createdAt: now(), secret: !!v.secret });
+    if (v.news && !v.secret) w.set('news/' + newId(), { headline: `${v.parties.map(cFlag).join('')} ${listNames(v.parties)} podpisują: ${v.name}`, body: v.text || '', category: 'Diplomacy', reliability: 'Confirmed', breaking: true, countries: v.parties, gameTime: gameNow(), createdAt: now(), audienceAll: true, audience: [], source: 'gm' });
+    if (v.chron) w.set('history/' + newId(), { turn: turn(), gameTime: gameNow(), text: `${listNames(v.parties)} ${v.secret ? 'potajemnie ' : ''}podpisują: ${v.name} (${tr('treaty', v.type)}).`, countries: v.parties, createdAt: now(), secret: !!v.secret });
   });
 }
-const listNames = ids => { const n = ids.map(cName); return n.length > 1 ? n.slice(0, -1).join(', ') + ' and ' + n[n.length - 1] : n[0] || ''; };
+const listNames = ids => { const n = ids.map(cName); return n.length > 1 ? n.slice(0, -1).join(', ') + ' i ' + n[n.length - 1] : n[0] || ''; };
 
 function channels(me, others) {
   const msgs = Object.values(S.data.messages).filter(m => (m.parties || []).includes(me));
   const unreadFrom = new Set(msgs.filter(m => m.to === me && m.status === 'pending').map(m => m.from));
   if (!channel || channel === me) channel = null;
   const thread = channel ? msgs.filter(m => m.parties.includes(channel)).sort((a, b) => a.createdAt - b.createdAt) : [];
-  return h('section.channels', h('h3', '🔒 Private diplomatic channels'),
+  return h('section.channels', h('h3', '🔒 Prywatne kanały dyplomatyczne'),
     h('div.chan-list', others.map(o => h('button.chip' + (channel === o.id ? '.on' : ''), { onclick: () => { channel = o.id; goTab('diplo'); } }, `${o.flag} ${o.name}`, unreadFrom.has(o.id) ? h('span.dot') : null))),
     channel ? h('div.thread',
-      h('div.thread-head', `${cFlag(me)} ${cName(me)} → ${cFlag(channel)} ${cName(channel)}`, h('small.muted', ' · PRIVATE DIPLOMATIC CHANNEL')),
+      h('div.thread-head', `${cFlag(me)} ${cName(me)} → ${cFlag(channel)} ${cName(channel)}`, h('small.muted', ' · PRYWATNY KANAŁ DYPLOMATYCZNY')),
       thread.length ? thread.map(m => msgBubble(m, me)) : h('p.muted', 'Brak wiadomości. Zacznij rozmowę.'),
       composer(me, channel)) : h('p.muted', 'Wybierz państwo, aby otworzyć kanał.'));
 }
 function msgBubble(m, me) {
   const out = m.from === me, t = m.treaty;
   return h('div.msg' + (out ? '.out' : '.in') + '.' + (m.kind || 'message'),
-    h('div.msg-meta', `${cFlag(m.from)} ${out ? 'You' : cName(m.from)} · ${G.fmtDT(m.gameTime)}`, m.kind === 'proposal' ? h('span.prop-st.' + m.status, ` ${m.status.toUpperCase()}`) : null,
+    h('div.msg-meta', `${cFlag(m.from)} ${out ? 'Ty' : cName(m.from)} · ${G.fmtDT(m.gameTime)}`, m.kind === 'proposal' ? h('span.prop-st.' + m.status, ` ${PSTAT[m.status] ?? m.status}`) : null,
       isAdmin() && h('button.btn.xs.logdel', { title: 'Usuń (admin)', onclick: async () => { if (await confirmBox('Usunąć wiadomość z kanału?', { danger: true })) run('DELETE_MESSAGE', m.subject || m.id, w => w.del('messages/' + m.id)); } }, '✕')),
     m.subject ? h('b', m.subject) : null, h('p', m.text),
-    t ? h('div.treaty-draft', `📜 ${t.name} — ${t.type}${t.secret ? ' · 🔒 secret' : ''}`) : null,
+    t ? h('div.treaty-draft', `📜 ${t.name} — ${tr('treaty', t.type)}${t.secret ? ' · 🔒 tajne' : ''}`) : null,
     m.kind === 'proposal' && m.status === 'pending' && m.to === me && canEdit(me) ? h('div.btn-row',
-      h('button.btn.sm.primary', { onclick: () => respond(m, 'accepted') }, 'Accept'), h('button.btn.sm.danger', { onclick: () => respond(m, 'rejected') }, 'Reject'),
-      h('button.btn.sm', { onclick: () => counter(m) }, 'Counteroffer')) : null);
+      h('button.btn.sm.primary', { onclick: () => respond(m, 'accepted') }, 'Przyjmij'), h('button.btn.sm.danger', { onclick: () => respond(m, 'rejected') }, 'Odrzuć'),
+      h('button.btn.sm', { onclick: () => counter(m) }, 'Kontrpropozycja')) : null);
 }
 async function respond(m, status) {
   const ok = await run(status === 'accepted' ? 'ACCEPT_PROPOSAL' : 'REJECT_PROPOSAL', m.subject || m.text.slice(0, 40), w => {
     w.merge('messages/' + m.id, { status, respondedAt: now() });
     if (status === 'accepted' && m.treaty) {
       w.set('treaties/' + newId(), { name: m.treaty.name, type: m.treaty.type, parties: [m.from, m.to].sort(), secret: !!m.treaty.secret, status: 'active', text: m.text, signedAt: gameNow(), createdAt: now() });
-      if (!m.treaty.secret) w.set('news/' + newId(), { headline: `${cFlag(m.from)}${cFlag(m.to)} ${cName(m.from)} and ${cName(m.to)} sign ${m.treaty.name}`, body: '', category: 'Diplomacy', reliability: 'Confirmed', breaking: true, countries: [m.from, m.to], gameTime: gameNow(), createdAt: now(), audienceAll: true, audience: [], authorCountry: m.to, source: realGM() ? 'gm' : 'player', official: true });
+      if (!m.treaty.secret) w.set('news/' + newId(), { headline: `${cFlag(m.from)}${cFlag(m.to)} ${cName(m.from)} i ${cName(m.to)} podpisują: ${m.treaty.name}`, body: '', category: 'Diplomacy', reliability: 'Confirmed', breaking: true, countries: [m.from, m.to], gameTime: gameNow(), createdAt: now(), audienceAll: true, audience: [], authorCountry: m.to, source: realGM() ? 'gm' : 'player', official: true });
     }
   });
   if (ok) toast(status === 'accepted' ? '✅ Propozycja przyjęta' : '❌ Propozycja odrzucona', 'ok');
 }
 async function counter(m) {
-  const v = await form('Counteroffer', [{ k: 'text', label: 'Kontrpropozycja', type: 'textarea', value: m.text, req: true }, { k: 'tname', label: 'Traktat (nazwa)', value: m.treaty?.name }, { k: 'ttype', label: 'Typ', type: 'select', value: m.treaty?.type, options: ['', ...TREATY_TYPES] }, { k: 'secret', label: 'Tajny', type: 'check', value: m.treaty?.secret }]);
+  const v = await form('Kontrpropozycja', [{ k: 'text', label: 'Kontrpropozycja', type: 'textarea', value: m.text, req: true }, { k: 'tname', label: 'Traktat (nazwa)', value: m.treaty?.name }, { k: 'ttype', label: 'Typ', type: 'select', value: m.treaty?.type, options: [['', '—'], ...trOpts('treaty', TREATY_TYPES)] }, { k: 'secret', label: 'Tajny', type: 'check', value: m.treaty?.secret }]);
   if (!v) return;
   await run('COUNTEROFFER', m.subject || '', w => {
     w.merge('messages/' + m.id, { status: 'countered', respondedAt: now() });
-    w.set('messages/' + newId(), { from: m.to, to: m.from, parties: [m.from, m.to].sort(), kind: 'proposal', status: 'pending', subject: 'Counteroffer: ' + (m.subject || ''), text: v.text, treaty: v.tname ? { name: v.tname, type: v.ttype || 'Secret agreement', secret: v.secret } : null, replyTo: m.id, createdAt: now(), gameTime: gameNow() });
+    w.set('messages/' + newId(), { from: m.to, to: m.from, parties: [m.from, m.to].sort(), kind: 'proposal', status: 'pending', subject: 'Kontrpropozycja: ' + (m.subject || ''), text: v.text, treaty: v.tname ? { name: v.tname, type: v.ttype || 'Secret agreement', secret: v.secret } : null, replyTo: m.id, createdAt: now(), gameTime: gameNow() });
   });
 }
 function composer(me, to) {
   const subj = h('input', { placeholder: 'Temat (opcjonalnie)', 'data-keep': 'subj' });
-  const txt = h('textarea', { rows: 3, placeholder: 'Sweden proposes joint development of a new naval missile system…', 'data-keep': 'msg' });
-  const kind = h('select', { 'data-keep': 'kind' }, h('option', { value: 'message' }, 'Wiadomość'), h('option', { value: 'proposal' }, 'Propozycja (Accept/Reject)'));
+  const txt = h('textarea', { rows: 3, placeholder: 'Szwecja proponuje wspólne opracowanie nowego morskiego systemu rakietowego…', 'data-keep': 'msg' });
+  const kind = h('select', { 'data-keep': 'kind' }, h('option', { value: 'message' }, 'Wiadomość'), h('option', { value: 'proposal' }, 'Propozycja (przyjmij / odrzuć)'));
   const tname = h('input', { placeholder: 'Nazwa porozumienia (opcjonalnie)', 'data-keep': 'tname' });
-  const ttype = h('select', { 'data-keep': 'ttype' }, TREATY_TYPES.map(t => h('option', t)));
+  const ttype = h('select', { 'data-keep': 'ttype' }, TREATY_TYPES.map(t => h('option', { value: t }, tr('treaty', t))));
   const secret = h('input', { type: 'checkbox' }), reveal = h('input', { type: 'checkbox' });
   const send = async () => {
     if (!txt.value.trim()) return;
     const isProp = kind.value === 'proposal';
     const ok = await run('SEND_MESSAGE', `${cName(me)} → ${cName(to)}`, w => {
       w.set('messages/' + newId(), { from: me, to, parties: [me, to].sort(), kind: kind.value, status: isProp ? 'pending' : 'sent', subject: subj.value.trim(), text: txt.value.trim(), treaty: isProp && tname.value.trim() ? { name: tname.value.trim(), type: ttype.value, secret: secret.checked } : null, createdAt: now(), gameTime: gameNow() });
-      if (reveal.checked) w.set('news/' + newId(), { headline: `${cFlag(me)}${cFlag(to)} ${cDem(me)} and ${cDem(to)} officials held an undisclosed meeting`, body: '', category: 'Diplomacy', reliability: 'Reliable', breaking: false, countries: [me, to], gameTime: gameNow(), createdAt: now(), audienceAll: true, audience: [], authorCountry: me, source: realGM() ? 'gm' : 'player', official: false });
+      if (reveal.checked) w.set('news/' + newId(), { headline: `${cFlag(me)}${cFlag(to)} Przedstawiciele państw ${cName(me)} i ${cName(to)} odbyli niejawne spotkanie`, body: '', category: 'Diplomacy', reliability: 'Reliable', breaking: false, countries: [me, to], gameTime: gameNow(), createdAt: now(), audienceAll: true, audience: [], authorCountry: me, source: realGM() ? 'gm' : 'player', official: false });
     });
     if (ok) { txt.value = ''; subj.value = ''; tname.value = ''; toast('📨 Wysłano kanałem dyplomatycznym', 'ok'); }
   };
@@ -333,10 +335,10 @@ const intelPanel = {
     return h('div.intel',
       gm ? h('div.country-picker', h('select', { onchange: e => { intelFor = e.target.value || null; goTab('intel'); } }, h('option', { value: '' }, '— wszystkie państwa —'), countriesSorted().map(c => h('option', { value: c.id, selected: c.id === C }, `${c.flag} ${c.name}`))),
         h('label.chk', h('input', { type: 'checkbox', checked: !!S.showAllIntel, onchange: e => { S.showAllIntel = e.target.checked; window.dispatchEvent(new Event('ww:refresh')); } }), ' pokaż wszystkie raporty na mapie')) : null,
-      C ? h('div.intel-head', h('h2', `${cFlag(C)} ${cDem(C).toUpperCase()} INTELLIGENCE`), priv ? h('div.ilevel', 'Intelligence Level: ', h('b', `${priv.intelLevel || '?'}/5`), h('span.dots', [1, 2, 3, 4, 5].map(n => h('i' + (n <= (priv.intelLevel || 0) ? '.on' : ''))))) : null) : null,
+      C ? h('div.intel-head', h('h2', `${cFlag(C)} WYWIAD — ${cName(C).toUpperCase()}`), priv ? h('div.ilevel', 'Poziom wywiadu: ', h('b', `${priv.intelLevel || '?'}/5`), h('span.dots', [1, 2, 3, 4, 5].map(n => h('i' + (n <= (priv.intelLevel || 0) ? '.on' : ''))))) : null) : null,
       h('div.btn-row', h('button.btn.sm', { onclick: () => U.intelReport({ toCountry: C }) }, gm ? '+ Raport wywiadu' : '+ Notatka analityczna')),
-      [['known', 'Known'], ['suspected', 'Suspected'], ['unknown', 'Unknown']].map(([k, l]) => h('section', h('h3', l), cat(k).length ? cat(k).map(item) : h('p.muted', '—'))),
-      h('section', h('h3', '📡 Tracked contacts'), tracks.length ? tracks.map(item) : h('p.muted', 'Brak śledzonych kontaktów.')));
+      [['known', 'Wiemy'], ['suspected', 'Podejrzewamy'], ['unknown', 'Nie wiemy']].map(([k, l]) => h('section', h('h3', l), cat(k).length ? cat(k).map(item) : h('p.muted', '—'))),
+      h('section', h('h3', '📡 Śledzone kontakty'), tracks.length ? tracks.map(item) : h('p.muted', 'Brak śledzonych kontaktów.')));
   }
 };
 const canEditIntel = i => realGM() || (i.source === 'self' && i.toCountry === myCountry());
@@ -356,17 +358,17 @@ const chron = {
       const by = {}; list.forEach(e => (by[e.turn || 0] = by[e.turn || 0] || []).push(e));
       body = Object.entries(by).sort((a, b) => b[0] - a[0]).map(([t, es]) => {
         const perC = {}; es.forEach(e => { const cs = (e.countries || []).length ? e.countries : ['__world']; cs.forEach(c => (perC[c] = perC[c] || []).push(e)); });
-        return h('div.turn-rep', h('h3', `TURN ${t}`), Object.entries(perC).map(([c, xs]) => h('div', h('b', c === '__world' ? '🌍 World' : `${cFlag(c)} ${cName(c)}`), h('ul', xs.map(entry)))));
+        return h('div.turn-rep', h('h3', `TURA ${t}`), Object.entries(perC).map(([c, xs]) => h('div', h('b', c === '__world' ? '🌍 Świat' : `${cFlag(c)} ${cName(c)}`), h('ul', xs.map(entry)))));
       });
     }
-    return h('div.chron', h('div.feed-head', h('h2', '📜 WORLD HISTORY'), h('div.btn-row', gm ? h('button.btn.sm', { onclick: () => histForm() }, '+ Wpis') : null, h('button.btn.sm', { onclick: exportChron }, '⬇ Eksport'))),
+    return h('div.chron', h('div.feed-head', h('h2', '📜 KRONIKA ŚWIATA'), h('div.btn-row', gm ? h('button.btn.sm', { onclick: () => histForm() }, '+ Wpis') : null, h('button.btn.sm', { onclick: exportChron }, '⬇ Eksport'))),
       h('div.filters', [['years', 'Według lat'], ['turns', 'Raporty tur']].map(([k, l]) => h('button.chip' + (chronMode === k ? '.on' : ''), { onclick: () => { chronMode = k; goTab('chron'); } }, l))),
       list.length ? body : h('div.empty', 'Historia tej kampanii jeszcze nie została napisana.'));
   }
 };
 async function histForm(e = {}) {
   const v = await form(e.id ? 'Edycja wpisu kroniki' : 'Nowy wpis kroniki', [
-    { k: 'text', label: 'Wydarzenie', type: 'textarea', value: e.text, req: true, ph: 'Sweden launches Project VASA.' },
+    { k: 'text', label: 'Wydarzenie', type: 'textarea', value: e.text, req: true, ph: 'Szwecja rozpoczyna Projekt Waza.' },
     { k: 'countries', label: 'Państwa', type: 'multi', value: e.countries || [], options: countriesSorted().map(c => [c.id, `${c.flag} ${c.name}`]) },
     { k: 'turn', label: 'Tura', type: 'number', value: e.turn ?? turn() }, { k: 'gameTime', label: 'Data', type: 'datetime', value: e.gameTime ?? gameNow(), now: gameNow },
     { k: 'secret', label: 'Ukryty (widoczny tylko dla państw wpisu)', type: 'check', value: e.secret }]);
@@ -375,8 +377,8 @@ async function histForm(e = {}) {
 }
 function exportChron() {
   const list = Object.values(S.data.history).sort((a, b) => (a.gameTime || 0) - (b.gameTime || 0));
-  let out = `# WORLD HISTORY\n`, y = null;
-  list.forEach(e => { const yy = new Date(e.gameTime || 0).getUTCFullYear(); if (yy !== y) { y = yy; out += `\n## ${y}\n\n`; } out += `- [Turn ${e.turn || '?'} · ${G.fmtDate(e.gameTime)}] ${(e.countries || []).map(cName).join(', ')}${e.countries?.length ? ': ' : ''}${e.text}\n`; });
+  let out = `# KRONIKA ŚWIATA\n`, y = null;
+  list.forEach(e => { const yy = new Date(e.gameTime || 0).getUTCFullYear(); if (yy !== y) { y = yy; out += `\n## ${y}\n\n`; } out += `- [Tura ${e.turn || '?'} · ${G.fmtDate(e.gameTime)}] ${(e.countries || []).map(cName).join(', ')}${e.countries?.length ? ': ' : ''}${e.text}\n`; });
   download('worldwatch-kronika.md', out, 'text/markdown');
 }
 

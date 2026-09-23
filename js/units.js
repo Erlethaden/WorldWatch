@@ -1,6 +1,6 @@
 // Obiekty na mapie: tworzenie, podróże dyplomatyczne, edycja w locie, manifest, rozdział wywiadu
 import { S, G, run, writeUnit, writeChar, newId, now, gameNow, realGM, myCountry, canEdit, countriesSorted, cName, cDem, cFlag, charsOf, charName, charView,
-  KINDS, VIS, MISSIONS, CATEGORIES, STATUS_OVERRIDES, ZONE_TYPES, posOf, speedKmh, nearestPlace, allPlaces, countryAtPlace, projectUnit, unitViews, turn } from './store.js';
+  KINDS, VIS, MISSIONS, CATEGORIES, STATUS_OVERRIDES, ZONE_TYPES, posOf, speedKmh, nearestPlace, allPlaces, countryAtPlace, projectUnit, unitViews, turn, tr, trOpts } from './store.js';
 import { form, confirmBox, toast, h, modal, esc } from './ui.js';
 
 export const countryOpts = (withGm) => (realGM() ? countriesSorted() : countriesSorted().filter(c => c.id === myCountry())).map(c => [c.id, `${c.flag} ${c.name}`]).concat(withGm && realGM() ? [['__gm', '— brak / nieznany (tylko GM)']] : []);
@@ -17,10 +17,10 @@ export async function editUnit(sec, presetKind) {
     { k: 'kind', label: 'Rodzaj', type: 'select', value: sec.kind, options: Object.entries(KINDS).map(([k, x]) => [k, x.pl]).filter(([k]) => realGM() || k !== 'contact') },
     { k: 'countryId', label: 'Państwo (właściciel)', type: 'select', value: sec.countryId, options: countryOpts(true) },
     { k: 'callsign', label: 'Znak / nazwa', value: sec.callsign, req: true, ph: 'np. SE-ROYAL01, HSwMS Gotland' },
-    { k: 'type', label: 'Typ', value: sec.type, ph: 'np. Government Jet, Submarine, Frigate' },
-    { k: 'operator', label: 'Operator', value: sec.operator, ph: 'np. Swedish Government' },
-    { k: 'category', label: 'Kategoria', type: 'select', value: sec.category, options: CATEGORIES },
-    { k: 'guess', label: 'Co widzą inni (np. Possible submarine)', value: sec.guess, show: x => x.kind === 'contact' },
+    { k: 'type', label: 'Typ', value: sec.type, ph: 'np. Samolot rządowy, Okręt podwodny, Fregata' },
+    { k: 'operator', label: 'Operator', value: sec.operator, ph: 'np. Rząd Szwecji' },
+    { k: 'category', label: 'Kategoria', type: 'select', value: sec.category, options: trOpts('category', CATEGORIES) },
+    { k: 'guess', label: 'Co widzą inni (np. możliwy okręt podwodny)', value: sec.guess, show: x => x.kind === 'contact' },
     { type: 'section', label: 'Pozycja / trasa' },
     { k: 'from', label: 'Pozycja / start', type: 'place', value: r[0] || capPlace(sec.countryId), req: true },
     { k: 'via', label: 'Punkty pośrednie', type: 'places', value: r.slice(1, -1), show: x => !['satellite', 'zone', 'base'].includes(x.kind) },
@@ -33,11 +33,11 @@ export async function editUnit(sec, presetKind) {
     { k: 'periodMin', label: 'Okres orbity (min)', type: 'number', value: sec.sat?.periodMin ?? 95, show: x => x.kind === 'satellite' },
     { type: 'section', label: 'Widoczność i misja' },
     { k: 'visibility', label: 'Widoczność', type: 'select', value: sec.visibility, options: Object.entries(VIS) },
-    { k: 'mission', label: 'Misja', type: 'select', value: sec.mission, options: MISSIONS },
+    { k: 'mission', label: 'Misja', type: 'select', value: sec.mission, options: trOpts('mission', MISSIONS) },
     { k: 'missionVisible', label: 'Misja jawna dla innych', type: 'check', value: sec.missionVisible },
     { k: 'passengersVisible', label: 'Pasażerowie jawni', type: 'check', value: sec.passengersVisible, show: x => ['aircraft', 'ship', 'ground'].includes(x.kind) },
     { k: 'confidence', label: 'Pewność wykrycia (dla innych)', type: 'range', value: sec.confidence ?? 50, show: x => x.visibility === 'classified' || x.kind === 'contact' },
-    { k: 'statusOverride', label: 'Status ręczny', type: 'select', value: sec.statusOverride || '', options: STATUS_OVERRIDES.map(s => [s, s || '— automatyczny —']) },
+    { k: 'statusOverride', label: 'Status ręczny', type: 'select', value: sec.statusOverride || '', options: STATUS_OVERRIDES.map(s => [s, s ? tr('status', s) : '— automatyczny —']) },
     { k: 'notes', label: 'Notatki (tajne)', type: 'textarea', value: sec.notes }
   ], { wide: true, submit: isNew ? 'Utwórz' : 'Zapisz' });
   if (!v) return;
@@ -64,12 +64,12 @@ export async function createTrip(pre = {}) {
   const vehicles = Object.values(S.data.unitSecrets).filter(u => u.countryId === C && ['aircraft', 'ship', 'submarine', 'ground'].includes(u.kind));
   const chars = charsOf(C);
   const pre0 = pre.unitId ? secOf(pre.unitId) : null;
-  const v = await form(`CREATE EVENT — ${cFlag(C)} ${cName(C)}`, [
-    { k: 'eventType', label: 'Typ wydarzenia', type: 'select', value: 'Diplomatic Visit', options: EVENT_TYPES },
+  const v = await form(`Kreator wydarzenia — ${cFlag(C)} ${cName(C)}`, [
+    { k: 'eventType', label: 'Typ wydarzenia', type: 'select', value: 'Diplomatic Visit', options: trOpts('event', EVENT_TYPES) },
     { k: 'vehicle', label: 'Transport', type: 'select', value: pre.unitId || vehicles.find(x => x.kind === 'aircraft')?.id || '__new', options: [...vehicles.map(u => [u.id, `${u.callsign} (${u.type || KINDS[u.kind].pl})`]), ['__new', '+ nowy pojazd']] },
     { k: 'newCallsign', label: 'Znak nowego pojazdu', ph: `${S.data.countries[C]?.iso2 || 'XX'}-GOV01`, show: x => x.vehicle === '__new' },
     { k: 'newKind', label: 'Rodzaj', type: 'select', value: 'aircraft', options: [['aircraft', 'Samolot'], ['ship', 'Okręt / statek'], ['ground', 'Konwój lądowy']], show: x => x.vehicle === '__new' },
-    { k: 'newType', label: 'Typ', value: 'Government Jet', show: x => x.vehicle === '__new' },
+    { k: 'newType', label: 'Typ', value: 'Samolot rządowy', show: x => x.vehicle === '__new' },
     { k: 'passengers', label: 'Postacie / delegacja', type: 'multi', value: pre0?.passengers || [], options: chars.map(c => [c.id, `${c.icon || '👤'} ${c.title || ''} ${c.name}`]), empty: 'To państwo nie ma jeszcze postaci' },
     { k: 'from', label: 'Wylot z', type: 'place', value: pre0 ? curPlace(pre0) : capPlace(C), req: true, help: 'Puste przy istniejącym pojeździe = jego obecna pozycja' },
     { k: 'via', label: 'Postoje / punkty pośrednie', type: 'places', value: [] },
@@ -77,15 +77,15 @@ export async function createTrip(pre = {}) {
     { k: 'depTime', label: 'Odlot', type: 'datetime', value: gameNow(), now: gameNow },
     { k: 'duration', label: 'Czas podróży', type: 'duration', help: 'Puste = realny czas z dystansu. Wpisz np. „3h” dla czasu RPG.' },
     { k: 'visibility', label: 'Widoczność', type: 'select', value: 'public', options: Object.entries(VIS) },
-    { k: 'mission', label: 'Misja', type: 'select', value: 'Diplomatic', options: MISSIONS },
+    { k: 'mission', label: 'Misja', type: 'select', value: 'Diplomatic', options: trOpts('mission', MISSIONS) },
     { k: 'missionVisible', label: 'Misja jawna', type: 'check', value: true },
     { k: 'passengersVisible', label: 'Pasażerowie jawni', type: 'check', value: false },
     { k: 'autoNews', label: 'Automatyczne newsy (rozmowy po przylocie)', type: 'check', value: true },
     { k: 'talksAfter', label: 'Rozmowy zaczynają się po', type: 'duration', value: 20 * 60000, show: x => x.autoNews },
     { k: 'chronicle', label: 'Dodaj do kroniki świata', type: 'check', value: false, show: () => realGM() }
-  ], { wide: true, submit: 'CREATE EVENT' });
+  ], { wide: true, submit: 'Utwórz wydarzenie' });
   if (!v) return;
-  let sec = v.vehicle === '__new' ? { id: newId(), kind: v.newKind, countryId: C, callsign: v.newCallsign || `${(S.data.countries[C]?.iso2 || 'XX').toUpperCase()}-GOV${Math.floor(Math.random() * 90 + 10)}`, type: v.newType, operator: `${cDem(C)} Government`, category: 'Government', legs: [] } : { ...secOf(v.vehicle), id: v.vehicle };
+  let sec = v.vehicle === '__new' ? { id: newId(), kind: v.newKind, countryId: C, callsign: v.newCallsign || `${(S.data.countries[C]?.iso2 || 'XX').toUpperCase()}-GOV${Math.floor(Math.random() * 90 + 10)}`, type: v.newType, operator: `Rząd: ${cName(C)}`, category: 'Government', legs: [] } : { ...secOf(v.vehicle), id: v.vehicle };
   const route = [v.from, ...(v.via || []), v.to].map(p => ({ name: p.name, lat: +p.lat, lon: +p.lon, cc: p.cc || '' }));
   if ((sec.route || []).length > 1) sec.legs = [...(sec.legs || []), { from: sec.route[0].name, to: sec.route[sec.route.length - 1].name, dep: (sec.depTime || 0) + (sec.delay || 0), arr: (sec.depTime || 0) + (sec.delay || 0) + (sec.duration || 0), passengers: sec.passengers || [] }].slice(-30);
   Object.assign(sec, { route, depTime: v.depTime, duration: v.duration || autoDuration(sec.kind, route), delay: 0, holdAt: null, statusOverride: '', passengers: v.passengers, visibility: v.visibility, mission: v.mission, missionVisible: v.missionVisible, passengersVisible: v.passengersVisible, eventType: v.eventType });
@@ -94,11 +94,11 @@ export async function createTrip(pre = {}) {
     writeUnit(w, sec);
     if (v.autoNews && ['public', 'limited'].includes(v.visibility)) {
       const pub = v.visibility === 'public', flags = `${cFlag(C)}${destC && destC !== C ? cFlag(destC) : ''}`;
-      const who = v.passengersVisible && v.passengers.length ? charName(v.passengers[0]) : `${cDem(C)} officials`;
+      const who = v.passengersVisible && v.passengers.length ? charName(v.passengers[0]) : `delegacja ${cName(C)}`;
       const talks = /Diplomatic|State|Talks|Trade/.test(v.eventType);
       const headline = pub
-        ? (talks ? `${flags} ${who} and ${destC ? cDem(destC) : 'local'} officials begin talks in ${dest.name}` : `${flags} ${cDem(C)} ${v.eventType.toLowerCase()} arrives in ${dest.name}`)
-        : `${flags} ${cDem(C)} officials reportedly visiting ${destC ? cName(destC) : nearestPlace(dest)}`;
+        ? (talks ? `${flags} ${who[0].toUpperCase() + who.slice(1)} rozpoczyna rozmowy${destC ? ' z przedstawicielami ' + cName(destC) : ''} (${dest.name})` : `${flags} ${tr('event', v.eventType)} (${cName(C)}) — przybycie: ${dest.name}`)
+        : `${flags} Nieoficjalnie: przedstawiciele ${cName(C)} przebywają z wizytą — ${destC ? cName(destC) : nearestPlace(dest)}`;
       const nid = newId();
       w.set('news/' + nid, { headline, body: '', category: talks ? 'Diplomacy' : v.mission === 'Military' ? 'Military' : 'Politics', reliability: pub ? 'Confirmed' : 'Unverified', breaking: false, countries: [C, destC].filter(Boolean), gameTime: arr + (v.talksAfter || 0), createdAt: now(), audienceAll: true, audience: [], authorCountry: C, source: realGM() ? 'gm' : 'player', auto: true, unitId: sec.id, place: { name: dest.name, lat: dest.lat, lon: dest.lon } });
     }
@@ -133,7 +133,7 @@ export async function redirectUnit(id, mode = 'redirect') {
     const v = await form(`Awaryjne lądowanie — ${sec.callsign}`, [{ k: 'to', label: 'Lotnisko awaryjne', type: 'place', value: near, req: true }, { k: 'news', label: 'Breaking news (jeśli obiekt jest jawny)', type: 'check', value: true }]);
     if (!v) return; dest = v.to; news = v.news;
   } else {
-    const v = await form(`Zmiana trasy — ${sec.callsign}`, [{ k: 'to', label: 'Nowy cel', type: 'place', req: true }, { k: 'status', label: 'Status', type: 'select', value: 'DIVERTED', options: STATUS_OVERRIDES.map(s => [s, s || '— automatyczny —']) }]);
+    const v = await form(`Zmiana trasy — ${sec.callsign}`, [{ k: 'to', label: 'Nowy cel', type: 'place', req: true }, { k: 'status', label: 'Status', type: 'select', value: 'DIVERTED', options: STATUS_OVERRIDES.map(s => [s, s ? tr('status', s) : '— automatyczny —']) }]);
     if (!v) return; dest = v.to; status = v.status;
   }
   const here = p.phase === 'moving' || p.phase === 'hold' ? { name: nearestPlace(p.pos), lat: +p.pos.lat.toFixed(3), lon: +p.pos.lon.toFixed(3) } : curPlace(sec);
@@ -142,7 +142,7 @@ export async function redirectUnit(id, mode = 'redirect') {
   const n = { ...sec, id, route, depTime: t, delay: 0, holdAt: null, duration: Math.max(60000, Math.round(G.routeKm(route) / sp * 3600000)), statusOverride: status };
   await run(mode === 'emergency' ? 'EMERGENCY_LANDING' : mode === 'return' ? 'RETURN_UNIT' : 'REDIRECT_UNIT', `${sec.callsign} → ${dest.name}`, w => {
     writeUnit(w, n);
-    if (news && ['public', 'limited'].includes(sec.visibility)) w.set('news/' + newId(), { headline: sec.visibility === 'public' ? `${cFlag(sec.countryId)} ${sec.callsign} declares emergency, diverting to ${dest.name}` : `${cDem(sec.countryId)} government aircraft declares emergency`, body: '', category: 'Politics', reliability: 'Confirmed', breaking: true, countries: [sec.countryId], gameTime: t, createdAt: now(), audienceAll: true, audience: [], authorCountry: sec.countryId, source: realGM() ? 'gm' : 'player', place: { name: dest.name, lat: +dest.lat, lon: +dest.lon } });
+    if (news && ['public', 'limited'].includes(sec.visibility)) w.set('news/' + newId(), { headline: sec.visibility === 'public' ? `${cFlag(sec.countryId)} ${sec.callsign} ogłasza stan awaryjny i zmienia kurs na ${dest.name}` : `${cFlag(sec.countryId)} Samolot rządowy (${cName(sec.countryId)}) ogłasza stan awaryjny`, body: '', category: 'Politics', reliability: 'Confirmed', breaking: true, countries: [sec.countryId], gameTime: t, createdAt: now(), audienceAll: true, audience: [], authorCountry: sec.countryId, source: realGM() ? 'gm' : 'player', place: { name: dest.name, lat: +dest.lat, lon: +dest.lon } });
   });
 }
 export async function holdUnit(id) {
@@ -183,11 +183,11 @@ export function buildIntel(sec, toCountry, level, confidence, text) {
   const conf = Math.max(1, Math.min(100, confidence || 50));
   const km = level === 'identified' ? 0 : Math.round((105 - conf) * (sec.kind === 'submarine' ? 2.2 : 3));
   const route = (sec.route || []).map((p, i) => km ? { ...G.fuzzPoint(p, km, sec.id + toCountry + i + (sec.depTime || 0)), name: level === 'suspected' && i === 0 ? p.name : '?' } : { ...p });
-  const kindTxt = { aircraft: 'aircraft', ship: 'surface vessel', submarine: 'submarine', ground: 'ground movement', satellite: 'satellite', zone: 'military activity', base: 'facility', contact: 'contact' }[sec.kind] || 'contact';
-  const label = level === 'identified' ? `${cFlag(sec.countryId)} ${sec.callsign}` : level === 'suspected' ? `Possible ${cDem(sec.countryId)} ${kindTxt}` : `Possible ${sec.category === 'Government' ? 'government ' : ''}${kindTxt}`;
+  const kindTxt = { aircraft: 'samolot', ship: 'jednostka nawodna', submarine: 'okręt podwodny', ground: 'ruch wojsk lądowych', satellite: 'satelita', zone: 'aktywność wojskowa', base: 'obiekt', contact: 'kontakt' }[sec.kind] || 'kontakt';
+  const label = level === 'identified' ? `${cFlag(sec.countryId)} ${sec.callsign}` : level === 'suspected' ? `Możliwy ${kindTxt} (${cName(sec.countryId)})` : `Możliwy ${sec.category === 'Government' ? 'rządowy ' : ''}${kindTxt}`;
   const lines = level === 'identified'
-    ? [{ k: 'Country', v: `${cFlag(sec.countryId)} ${cName(sec.countryId)}` }, { k: 'Type', v: sec.type || kindTxt }, { k: 'Route', v: (sec.route || []).map(p => p.name).join(' → ') }, { k: 'Mission', v: sec.mission }]
-    : level === 'suspected' ? [{ k: 'Suspected origin', v: `${cFlag(sec.countryId)} ${cName(sec.countryId)}` }, { k: 'Type', v: `Possible ${kindTxt}` }] : [{ k: 'Type', v: `Possible ${kindTxt}` }];
+    ? [{ k: 'Państwo', v: `${cFlag(sec.countryId)} ${cName(sec.countryId)}` }, { k: 'Typ', v: sec.type || kindTxt }, { k: 'Trasa', v: (sec.route || []).map(p => p.name).join(' → ') }, { k: 'Misja', v: tr('mission', sec.mission) }]
+    : level === 'suspected' ? [{ k: 'Podejrzewane państwo', v: `${cFlag(sec.countryId)} ${cName(sec.countryId)}` }, { k: 'Typ', v: `możliwy ${kindTxt}` }] : [{ k: 'Typ', v: `możliwy ${kindTxt}` }];
   return { toCountry, unitId: sec.id, kind: sec.kind === 'zone' || sec.kind === 'base' ? sec.kind : sec.kind, level, confidence: conf, label, lines, text: text || '', route, depTime: sec.depTime || 0, duration: sec.duration || 0, delay: sec.delay || 0, holdAt: sec.holdAt || null, sat: sec.sat || null, radiusKm: sec.radiusKm || null, zoneType: sec.zoneType || null, fuzzKm: km, countryId: level === 'identified' || level === 'suspected' ? sec.countryId : null, createdGame: gameNow(), createdAt: now(), source: 'gm', category: 'known' };
 }
 export async function distributeIntel(id) {
@@ -220,7 +220,7 @@ export async function intelReport(pre = {}) {
   const v = await form(gm ? 'Nowy raport wywiadu' : 'Notatka analityczna', [
     { k: 'toCountry', label: 'Dla państwa', type: 'select', value: pre.toCountry || myCountry(), options: gm ? countriesSorted().map(c => [c.id, `${c.flag} ${c.name}`]) : [[myCountry(), cName(myCountry())]] },
     { k: 'category', label: 'Kategoria', type: 'select', value: pre.category || 'suspected', options: [['known', 'Known — wiemy'], ['suspected', 'Suspected — podejrzewamy'], ['unknown', 'Unknown — nie wiemy']] },
-    { k: 'label', label: 'Tytuł', value: pre.label, req: true, ph: 'np. New Polish-Swedish defence agreement' },
+    { k: 'label', label: 'Tytuł', value: pre.label, req: true, ph: 'np. Nowe polsko-szwedzkie porozumienie obronne' },
     { k: 'text', label: 'Treść / ocena', type: 'textarea', value: pre.text },
     { k: 'confidence', label: 'Pewność', type: 'range', value: pre.confidence ?? 60 },
     { k: 'place', label: 'Pozycja na mapie (opcjonalnie)', type: 'place', value: pre.pos || null },
