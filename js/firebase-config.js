@@ -15,5 +15,5 @@ export const FIREBASE_CONFIG = {
 };
 
 export const ADMIN_UIDS = [
-  // "TWOJ_UID_TUTAJ"
+  "pgRzOFxscaTH9oe7sjCrrHlRDy23"
 ];
