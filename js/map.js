@@ -1,7 +1,8 @@
 // Mapa świata (Leaflet): warstwy, markery ruchome, trasy, strefy, linie sojuszy, niepewność pozycji
 import { S, unitViews, posOf, gameNow, cColor, cFlag, cName, country, persp, gmView, KINDS, ZONE_TYPES, REL_COLOR, charView, charLocation, statusOf, G, myCountry, realGM } from './store.js';
 import { h, esc } from './ui.js';
-import { COUNTRY_PRESETS } from './places.js';
+import { CARTO_KEY } from './firebase-config.js';
+import { COUNTRY_PRESETS, CITIES } from './places.js';
 import { flagOf } from './store.js';
 
 export const LAYERS = [
@@ -44,9 +45,19 @@ export function colorOf(v) {
 export function initMap(el, { onSelectUnit, onCountryClick }) {
   onSelect = onSelectUnit; onCountry = onCountryClick;
   if (map) { map.remove(); markers.clear(); geo = null; }
-  map = L.map(el, { worldCopyJump: true, minZoom: 2, maxZoom: 12, zoomControl: false, preferCanvas: false }).setView([50, 15], 4);
+  map = L.map(el, { worldCopyJump: true, minZoom: 2, maxZoom: CARTO_KEY ? 12 : 8, zoomControl: false, preferCanvas: false }).setView([50, 15], 4);
   L.control.zoom({ position: 'bottomright' }).addTo(map);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { subdomains: 'abcd', maxZoom: 19, attribution: '© OpenStreetMap © CARTO' }).addTo(map);
+  map.createPane('land').style.zIndex = 350;
+  map.createPane('labels').style.zIndex = 450; map.getPane('labels').style.pointerEvents = 'none';
+  // Domyślnie mapa jest w 100% offline: ląd i granice z pliku Natural Earth (vendor/), bez kafelków i kluczy.
+  if (CARTO_KEY) L.tileLayer(`https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}.png?key=${encodeURIComponent(CARTO_KEY)}`, { maxZoom: 19, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions">CARTO</a>' }).addTo(map);
+  else {
+    map.attributionControl.addAttribution('Mapa: Natural Earth');
+    const grid = []; for (let lon = -180; lon <= 180; lon += 30) grid.push([[-85, lon], [85, lon]]); for (let lat = -60; lat <= 60; lat += 30) grid.push([[lat, -540], [lat, 540]]);
+    L.polyline(grid, { pane: 'land', color: '#16263a', weight: 1, interactive: false }).addTo(map);
+    labels = L.layerGroup().addTo(map);
+    map.on('moveend', drawLabels);
+  }
   map.createPane('zones').style.zIndex = 380;
   map.createPane('lines').style.zIndex = 390;
   ['countries', 'static', 'lines', 'units', 'fuzz'].forEach(k => groups[k] = L.layerGroup().addTo(map));
@@ -60,6 +71,7 @@ export function initMap(el, { onSelectUnit, onCountryClick }) {
       const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates;
       polys.forEach(poly => poly.forEach(ring => { let off = 0; for (let i = 1; i < ring.length; i++) { const d = ring[i][0] + off - ring[i - 1][0]; if (d > 180) off -= 360; else if (d < -180) off += 360; ring[i][0] += off; } }));
     });
+    if (!CARTO_KEY) L.geoJSON(fc, { pane: 'land', renderer: L.canvas({ pane: 'land', padding: 0.5 }), interactive: false, style: { stroke: false, fillColor: '#18222e', fillOpacity: 1 } }).addTo(map);
     geo = L.geoJSON(fc, { style: styleCountry, onEachFeature: (f, l) => l.on('click', e => { if (pickCb || drawCb) return; const t = terrByIso(f.id), c = t ? { id: t.controller } : byIsoN(f.id); if (c) { L.DomEvent.stop(e); onCountry(c.id); } }) }).addTo(groups.countries);
   }).catch(e => console.warn('geo', e));
   map.on('click', e => {
@@ -68,6 +80,7 @@ export function initMap(el, { onSelectUnit, onCountryClick }) {
     select(null);
   });
   map.on('zoomend', render);
+  setTimeout(drawLabels, 0);
   if (!window._wwTick) window._wwTick = setInterval(tick, 1000);
   return map;
 }
@@ -120,6 +133,17 @@ export function drawArea() {
     document.addEventListener('keydown', key);
     map.getContainer().parentElement.append(bar);
   });
+}
+// podpisy miejsc (offline): stolice od zoomu 5, duże miasta od 7 — tylko w widocznym obszarze
+let labels = null;
+const CAPS = COUNTRY_PRESETS.filter(p => p.cap).map(p => ({ name: p.cap, lat: p.lat, lon: p.lon, cap: true }));
+const BIG = CITIES.map(([name, , lat, lon]) => ({ name, lat, lon }));
+function drawLabels() {
+  if (!labels) return; labels.clearLayers();
+  const z = map.getZoom(); if (z < 5) return;
+  const b = map.getBounds().pad(0.1), seen = new Set();
+  [...CAPS, ...(z >= 7 ? BIG : [])].filter(p => { if (seen.has(p.name) || !b.contains([p.lat, p.lon])) return false; seen.add(p.name); return true; }).slice(0, 250)
+    .forEach(p => L.marker([p.lat, p.lon], { pane: 'labels', interactive: false, keyboard: false, icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<div class="plabel${p.cap ? ' cap' : ''}">${esc(p.name)}</div>` }) }).addTo(labels));
 }
 export function pickOnMap() {
   return new Promise(res => {
