@@ -1,6 +1,6 @@
 // Panel GM/Admin: gracze, państwa, postacie, obiekty, tury; system (admin: backupy, logi, porządki, pola państw)
 import { S, G, DB, run, now, newId, isDemo, gameNow, turn, realGM, isAdmin, persp, cFlag, cName, cDem, country, countriesSorted, userOfCountry, charView, charsOf, charLocation, writeChar, writeUnit, projectUnit,
-  flagOf, presetByIso, KINDS, VIS, statusOf, unitViews, createBackup, deleteBackup, loadBackup, restoreSnapshot, snapshotWorld, cleanupLogs, undoOp, errId, log, allPlaces, placeLabel } from './store.js';
+  flagOf, presetByIso, KINDS, VIS, statusOf, statusChip, unitViews, createBackup, deleteBackup, loadBackup, restoreSnapshot, snapshotWorld, cleanupLogs, undoOp, errId, log, allPlaces, placeLabel } from './store.js';
 import { h, esc, form, modal, confirmBox, toast, chip, kv, download, pickFile, ago } from './ui.js';
 import { COUNTRY_PRESETS } from './places.js';
 import { AUTH } from './db.js';
@@ -36,16 +36,15 @@ function players() {
   const upd = (u, patch, label) => run('UPDATE_PLAYER', `${u.displayName}: ${label}`, w => w.merge('users/' + u.id, patch));
   return h('div',
     h('h3', 'ZARZĄDZANIE GRACZAMI'),
-    h('div.table-wrap', h('table.tbl', h('thead', h('tr', h('th', 'Gracz'), h('th', 'Państwo'), h('th', 'Rola'), h('th', 'Aktywność'), h('th', ''))),
-      h('tbody', us.map(u => h('tr' + (u.role === 'pending' ? '.pending' : ''),
-        h('td', h('b', u.displayName || '?'), h('br'), h('small.muted', u.email || u.id.slice(0, 10))),
-        h('td', h('select', { disabled: !canManage(u) && u.id !== S.user.uid, onchange: e => upd(u, { countryId: e.target.value || null, ...(e.target.value && u.role === 'pending' ? { role: 'leader' } : {}) }, 'country → ' + (e.target.value || '—')) }, cOpts.map(([v, l]) => h('option', { value: v, selected: (u.countryId || '') === v }, l)))),
-        h('td', canManage(u) ? h('select', { onchange: e => upd(u, { role: e.target.value }, 'role → ' + e.target.value) }, roleOpts().map(([v, l]) => h('option', { value: v, selected: u.role === v }, l))) : h('span.role.' + u.role, (ROLES.find(r => r[0] === u.role) || ['', u.role])[1])),
-        h('td', h('small', u.lastSeen ? (now() - u.lastSeen < 180000 ? '🟢 online' : ago(u.lastSeen)) : '—')),
-        h('td', canManage(u) ? h('div.btn-row',
+    h('div.plist', us.map(u => h('div.pcard' + (u.role === 'pending' ? '.pending' : ''),
+        h('div.pc-head', h('div', h('b', u.displayName || '?'), ' ', h('small.muted', u.email || u.id.slice(0, 10))), h('small', u.lastSeen ? (now() - u.lastSeen < 180000 ? '🟢 online' : ago(u.lastSeen)) : '—')),
+        h('div.pc-row',
+        h('select', { disabled: !canManage(u) && u.id !== S.user.uid, onchange: e => upd(u, { countryId: e.target.value || null, ...(e.target.value && u.role === 'pending' ? { role: 'leader' } : {}) }, 'country → ' + (e.target.value || '—')) }, cOpts.map(([v, l]) => h('option', { value: v, selected: (u.countryId || '') === v }, l))),
+          canManage(u) ? h('select', { onchange: e => upd(u, { role: e.target.value }, 'role → ' + e.target.value) }, roleOpts().map(([v, l]) => h('option', { value: v, selected: u.role === v }, l))) : h('span.role.' + u.role, (ROLES.find(r => r[0] === u.role) || ['', u.role])[1]),
+        canManage(u) ? h('div.btn-row',
           u.suspendedCountry ? h('button.btn.xs', { title: 'Oddaj państwo', onclick: () => upd(u, { role: 'leader', countryId: u.suspendedCountry, suspendedCountry: null }, 'restore control') }, '↩ oddaj') :
             u.role === 'leader' && u.countryId ? h('button.btn.xs', { title: 'GM czasowo przejmuje państwo — gracz staje się obserwatorem', onclick: () => upd(u, { role: 'observer', suspendedCountry: u.countryId }, 'GM takes control') }, '✋ przejmij') : null,
-          isAdmin() ? h('button.btn.xs.danger', { onclick: async () => { if (!await confirmBox(`Usunąć gracza ${u.displayName}? (konto logowania zostaje — po ponownym zalogowaniu trafi do „oczekujących”)`, { danger: true })) return; await createBackup(`Przed usunięciem gracza ${u.displayName}`, { auto: true, reason: 'pre-delete', quiet: true }); run('DELETE_PLAYER', u.displayName, w => w.del('users/' + u.id)); } }, '🗑') : null) : h('small.muted', u.id === S.user.uid ? 'ty' : '—'))))))),
+          isAdmin() ? h('button.btn.xs.danger', { onclick: async () => { if (!await confirmBox(`Usunąć gracza ${u.displayName}? (konto logowania zostaje — po ponownym zalogowaniu trafi do „oczekujących”)`, { danger: true })) return; await createBackup(`Przed usunięciem gracza ${u.displayName}`, { auto: true, reason: 'pre-delete', quiet: true }); run('DELETE_PLAYER', u.displayName, w => w.del('users/' + u.id)); } }, '🗑') : null) : h('small.muted', u.id === S.user.uid ? 'ty' : '—'))))),
     h('div.btn-row', h('button.btn.sm', { onclick: createPlayer }, '+ Utwórz konto gracza')),
     h('p.muted', 'Nowi gracze logują się sami (Google lub e-mail) i pojawiają się tu jako „oczekuje”. Wybierz im państwo — rola zmieni się na Przywódca państwa. „Przejmij” czasowo odbiera graczowi państwo (widzi świat jako obserwator), a GM steruje nim sam; „oddaj” przywraca.'));
 }
@@ -168,12 +167,12 @@ function units() {
   const K = ['aircraft', 'ship', 'submarine', 'ground', 'base', 'zone', 'satellite', 'contact'];
   return h('div',
     h('div.btn-row.wrap', h('button.btn.sm.primary', { onclick: () => U.createTrip() }, '🧭 Kreator wydarzenia'), K.map(k => h('button.btn.sm', { onclick: async () => { const id = await U.editUnit(null, k); id && select('u:' + id, true); } }, '+ ' + KINDS[k].pl))),
-    h('div.table-wrap', h('table.tbl', h('thead', h('tr', h('th', 'Obiekt'), h('th', 'Status'), h('th', 'Widoczność'), h('th', ''))), h('tbody', list.map(u => {
-      const v = { ...u, key: 'u:' + u.id };
-      return h('tr', h('td', { onclick: () => select('u:' + u.id, true), style: { cursor: 'pointer' } }, `${cFlag(u.countryId)} `, h('b', u.callsign), h('br'), h('small.muted', `${KINDS[u.kind]?.pl || u.kind}${(u.route || []).length > 1 ? ' · ' + u.route[0].name + ' → ' + u.route[u.route.length - 1].name : ''}`)),
-        h('td', h('span.status.s-' + statusOf(v).split(' ')[0].toLowerCase(), statusOf(v))), h('td', chip(u.visibility || 'public', u.visibility)),
-        h('td', h('div.btn-row', h('button.btn.xs', { onclick: () => U.editUnit(u) }, '✏️'), h('button.btn.xs', { onclick: () => U.distributeIntel(u.id) }, '📡'), h('button.btn.xs.danger', { onclick: () => U.deleteUnit(u.id) }, '🗑'))));
-    })))),
+    h('div.plist', list.map(u => {
+      const v = { ...u, key: 'u:' + u.id }, st = statusChip(v);
+      return h('div.pcard', h('div.pc-head', h('div', { onclick: () => select('u:' + u.id, true), style: { cursor: 'pointer' } }, `${cFlag(u.countryId)} `, h('b', u.callsign), ' ', h('small.muted', `${KINDS[u.kind]?.pl || u.kind}${(u.route || []).length > 1 ? ' · ' + u.route[0].name + ' → ' + u.route[u.route.length - 1].name : ''}`))),
+        h('div.pc-row', h('span.status.' + st.cls, st.text), chip(VIS[u.visibility || 'public'], u.visibility || 'public'),
+          h('div.btn-row', { style: { marginLeft: 'auto' } }, h('button.btn.xs', { onclick: () => U.editUnit(u) }, '✏️'), h('button.btn.xs', { title: 'Rozdaj raporty wywiadu', onclick: () => U.distributeIntel(u.id) }, '📡'), h('button.btn.xs.danger', { onclick: () => U.deleteUnit(u.id) }, '🗑'))));
+    })),
     !list.length ? h('div.empty', 'Brak obiektów.') : null);
 }
 
