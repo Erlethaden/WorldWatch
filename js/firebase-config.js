@@ -5,7 +5,7 @@
 //  3. ADMIN_UIDS: UID konta właściciela (ADMIN). Po pierwszym logowaniu zobaczysz swój UID na ekranie
 //     "Oczekiwanie na zatwierdzenie" — wklej go tu ORAZ w firestore.rules (funkcja owner()).
 // ───────────────────────────────────────────────────────────────
-export const firebaseConfig = {
+export const FIREBASE_CONFIG = {
   apiKey: "AIzaSyBxpMhVyAn_fiixGNw-20v9hR9jxzxXAFY",
   authDomain: "world-watch-a8eaf.firebaseapp.com",
   projectId: "world-watch-a8eaf",
