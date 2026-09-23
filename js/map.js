@@ -5,6 +5,11 @@ import { CARTO_KEY } from './db.js';
 import { COUNTRY_PRESETS, CITIES } from './places.js';
 import { flagOf, tr as trl } from './store.js';
 
+// Leaflet 1.9: tooltip otwierany (po przeciągnięciu mapy / focusie) na warstwie, której tooltip już usunięto → „_source of null”
+{ const P = L.Layer.prototype;
+  for (const k of ['_openTooltip', 'openTooltip']) { const f = P[k]; P[k] = function (...a) { return this._tooltip && this._map ? f.apply(this, a) : this; }; }
+  const af = P._addFocusListenersOnLayer; if (af) P._addFocusListenersOnLayer = function (l) { const el = typeof l.getElement === 'function' && l.getElement(); if (el) { L.DomEvent.on(el, 'focus', function () { if (this._tooltip) { this._tooltip._source = l; this.openTooltip(); } }, this); L.DomEvent.on(el, 'blur', this.closeTooltip, this); } }; }
+
 export const LAYERS = [
   { k: 'aircraft', i: '✈️', l: 'Lotnictwo' }, { k: 'naval', i: '🚢', l: 'Marynarka' }, { k: 'military', i: '🪖', l: 'Wojsko' },
   { k: 'diplomacy', i: '🏛️', l: 'Dyplomacja' }, { k: 'news', i: '📰', l: 'Wiadomości' }, { k: 'satellites', i: '🛰️', l: 'Satelity' },
