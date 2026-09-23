@@ -1,6 +1,6 @@
 // Panel GM/Admin: gracze, państwa, postacie, obiekty, tury; system (admin: backupy, logi, porządki, pola państw)
 import { S, G, DB, run, now, newId, isDemo, gameNow, turn, realGM, isAdmin, persp, cFlag, cName, cDem, country, countriesSorted, userOfCountry, charView, charsOf, charLocation, writeChar, writeUnit, projectUnit,
-  flagOf, presetByIso, STATS, KINDS, VIS, statusOf, unitViews, createBackup, deleteBackup, loadBackup, restoreSnapshot, snapshotWorld, cleanupLogs, undoOp, errId, log, allPlaces, placeLabel } from './store.js';
+  flagOf, presetByIso, KINDS, VIS, statusOf, unitViews, createBackup, deleteBackup, loadBackup, restoreSnapshot, snapshotWorld, cleanupLogs, undoOp, errId, log, allPlaces, placeLabel } from './store.js';
 import { h, esc, form, modal, confirmBox, toast, chip, kv, download, pickFile, ago } from './ui.js';
 import { COUNTRY_PRESETS } from './places.js';
 import { AUTH } from './db.js';
@@ -101,18 +101,17 @@ async function editCountry(cid) {
   const doc = { name: v.name, official: v.official, tag: v.tag, flag: v.flag || '🏳️', color: v.color, demonym: v.demonym || v.name, iso2: (v.iso2 || '').toUpperCase(), isoN: v.isoN || '', capital: { name: v.capital.name, lat: +v.capital.lat, lon: +v.capital.lon }, government: { system: v.system, headTitle: v.headTitle, head: v.head, headOfGov: v.headOfGov, rulingParty: v.rulingParty }, publicStats: !!v.publicStats };
   await run(cid ? 'UPDATE_COUNTRY' : 'CREATE_COUNTRY', v.name, w => {
     w.set('countries/' + id, doc);
-    if (!cid) w.set('countryPrivate/' + id, { countryId: id, economy: {}, military: {}, tech: {}, intelLevel: 2, projects: [], notes: '' });
+    if (!cid) w.set('countryPrivate/' + id, { countryId: id, intelLevel: 2, projects: [], notes: '' });
   });
 }
 async function editStats(cid) {
   const p = S.data.countryPrivate[cid] || {};
   const v = await form(`📊 Statystyki — ${cFlag(cid)} ${cName(cid)}`, [
-    ...[...STATS, ['Inne', []]].flatMap(([title, fields]) => {
-      const extra = customFields().filter(f => f.section === title).map(f => f.public ? ['pub', f.key, f.label + ' (jawne)'] : ['custom', f.key, f.label]);
-      const all = [...fields, ...extra];
-      return all.length ? [{ type: 'section', label: title }, ...all.map(([grp, k, l]) => ({ k: grp + '.' + k, label: l, value: grp === 'pub' ? country(cid)?.custom?.[k] : p[grp]?.[k] }))] : [];
-    }),
-    { k: 'intelLevel', label: 'Intelligence Level (1–5)', type: 'number', value: p.intelLevel ?? 2, min: 0, max: 5 }
+    ...(customFields().length ? [] : [{ type: 'info', html: 'Nie ma jeszcze żadnych pól statystyk. Admin dodaje je w GM → System → 🧩 Pola państw.' }]),
+    ...statSections().flatMap(([title, fields]) => [{ type: 'section', label: title },
+      ...fields.map(f => ({ k: (f.public ? 'pub.' : 'custom.') + f.key, label: f.label + (f.public ? ' (jawne)' : ''), value: f.public ? country(cid)?.custom?.[f.key] : p.custom?.[f.key] }))]),
+    { type: 'section', label: 'Wywiad' },
+    { k: 'intelLevel', label: 'Poziom wywiadu (1–5)', type: 'number', value: p.intelLevel ?? 2, min: 0, max: 5 }
   ], { wide: true });
   if (!v) return;
   const doc = { countryId: cid, intelLevel: v.intelLevel ?? 2 };
@@ -367,18 +366,21 @@ function cleanup() {
 
 // ───────── WŁASNE POLA PAŃSTW (admin) ─────────
 export const customFields = () => S.admin?.fields || [];
+// [[sekcja, [pola]]] w kolejności pól
+export const statSections = () => { const m = new Map(); customFields().forEach(f => { const k = f.section || 'Inne'; m.set(k, [...(m.get(k) || []), f]); }); return [...m]; };
 function fields() {
-  const list = customFields(), sections = [...STATS.map(s => s[0]), 'Inne'];
-  const save = (next, label) => run('CUSTOM_FIELDS', label, w => w.merge('meta/admin', { fields: next }), { undo: false });
+  const list = customFields(), sections = statSections().map(s => s[0]);
+  const save = async (next, label, backup) => { if (backup) await createBackup('Przed zmianą pól: ' + label, { auto: true, reason: 'pre-fields', quiet: true }); return run('CUSTOM_FIELDS', label, w => w.merge('meta/admin', { fields: next }), { undo: false }); };
   return h('div',
-    h('p.muted', 'Dodatkowe pola informacji o państwach (np. „Rezerwy złota”, „Religia”, „Poziom korupcji”). Wartości wpisuje GM w 📊 Statystykach. Pole jawne widzą wszyscy gracze, niejawne tylko państwo i GM.'),
+    h('p.muted', 'Wszystkie pola statystyk państw (np. „PKB (mld)”, „CIV”, „Manpower”, „Stabilność”). Na starcie nie ma żadnych — dodajesz je tutaj, a wartości wpisuje GM w 📊 Statystykach. Pole jawne widzą wszyscy gracze, niejawne tylko państwo i GM. Pola są w każdym backupie (przed usunięciem pola robi się automatyczny backup).'),
     list.map((f, i) => h('div.gm-row', h('div.grow', h('b', f.label), h('small.muted', ` · ${f.section} · ${f.public ? 'jawne' : 'niejawne'}`)),
       h('div.btn-row', h('button.btn.xs', { disabled: !i, onclick: () => { const n = [...list]; [n[i - 1], n[i]] = [n[i], n[i - 1]]; save(n, 'reorder'); } }, '↑'),
-        h('button.btn.xs.danger', { onclick: async () => { if (await confirmBox(`Usunąć pole „${f.label}”? Wpisane wartości zostaną w bazie, ale znikną z widoku.`, { danger: true })) save(list.filter((_, j) => j !== i), 'delete ' + f.label); } }, '🗑')))),
-    !list.length ? h('div.empty', 'Brak własnych pól.') : null,
+        h('button.btn.xs.danger', { onclick: async () => { if (await confirmBox(`Usunąć pole „${f.label}”? Wpisane wartości zostaną w bazie, ale znikną z widoku.`, { danger: true })) save(list.filter((_, j) => j !== i), 'usuń ' + f.label, true); } }, '🗑')))),
+    !list.length ? h('div.empty', 'Brak pól statystyk.') : null,
     h('button.btn.sm.primary', { onclick: async () => {
-      const v = await form('Nowe pole państwa', [{ k: 'label', label: 'Nazwa pola', req: true, ph: 'np. Rezerwy złota' }, { k: 'section', label: 'Sekcja', type: 'select', options: sections }, { k: 'public', label: 'Jawne dla wszystkich graczy', type: 'check' }]);
-      if (v) save([...list, { key: 'f' + newId(), label: v.label, section: v.section, public: !!v.public }], 'add ' + v.label);
+      (document.getElementById('dl-sections') || document.body.appendChild(h('datalist#dl-sections'))).replaceChildren(...sections.map(x => h('option', { value: x })));
+      const v = await form('Nowe pole państwa', [{ k: 'label', label: 'Nazwa pola', req: true, ph: 'np. Rezerwy złota' }, { k: 'section', label: 'Sekcja', ph: 'np. Gospodarka, Wojsko, Polityka', list: 'dl-sections', value: sections[sections.length - 1] || '' }, { k: 'public', label: 'Jawne dla wszystkich graczy', type: 'check' }]);
+      if (v) save([...list, { key: 'f' + newId(), label: v.label, section: v.section || 'Inne', public: !!v.public }], 'dodaj ' + v.label);
     } }, '+ Nowe pole'));
 }
 

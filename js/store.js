@@ -152,13 +152,6 @@ const T = {
 };
 export const tr = (ns, k) => T[ns]?.[k] ?? k ?? '';
 export const trOpts = (ns, list) => list.map(k => [k, tr(ns, k)]);
-// Statystyki państw (jak w arkuszu GM): [sekcja, [[grupa zapisu, klucz, etykieta]]]
-export const STATS = [
-  ['Polityka', [['economy', 'stability', 'Stabilność'], ['economy', 'warSupport', 'Poparcie dla wojny']]],
-  ['Gospodarka', [['economy', 'population', 'Populacja'], ['economy', 'gdp', 'PKB (mld)'], ['economy', 'budget', 'Budżet'], ['economy', 'civ', 'CIV — fabryki cywilne'], ['economy', 'mic', 'MIC — fabryki wojskowe'], ['economy', 'nic', 'NIC — stocznie wojskowe'], ['economy', 'resources', 'Dostępne surowce kluczowe']]],
-  ['Technologia', [['tech', 'level', 'Poziom technologiczny'], ['tech', 'research', 'Projekty badawcze'], ['tech', 'space', 'Program kosmiczny'], ['tech', 'cyber', 'Cyber']]],
-  ['Wojsko', [['military', 'manpower', 'Manpower'], ['military', 'service', 'Poziom służby wojskowej'], ['military', 'army', 'Armia'], ['military', 'navy', 'Marynarka'], ['military', 'airforce', 'Lotnictwo'], ['military', 'missiles', 'Siły rakietowe'], ['military', 'intelligence', 'Wywiad']]]
-];
 export const STATUS_OVERRIDES = ['', 'DELAYED', 'DIVERTED', 'RETURNING', 'HOLDING', 'EMERGENCY', 'LOST CONTACT', 'GROUNDED', 'DOCKED', 'ON STATION'];
 
 // ───────── postacie ─────────

@@ -18,16 +18,16 @@ export async function seedWorld(keepClock) {
     C('DE', '#a3be8c', { official: 'Republika Federalna Niemiec', government: { system: 'Federalna republika parlamentarna', headTitle: 'Prezydent', head: 'Prezydent Karl Brenner', headOfGov: 'Kanclerz Miriam Albers', rulingParty: 'CDU/CSU' } })
   ];
   countries.forEach(({ id, ...c }) => { w.set('countries/' + id, c); S.data.countries[id] = { id, ...c }; });
-  const stats = (id, e, m, t, lvl, projects = []) => w.set('countryPrivate/' + id, { countryId: id, economy: e, military: m, tech: t, intelLevel: lvl, projects, notes: '' });
-  stats('se', { gdp: '640 mld $', budget: '28 mld $', civ: 42, mic: 18, nic: 12, population: '10,6 mln', stability: '82%', resources: 'Ruda żelaza, drewno, hydroenergia' }, { army: 'Umiarkowana', navy: 'W modernizacji', airforce: 'Flota JAS 39', missiles: 'Ograniczone', intelligence: 'MUST / FRA', manpower: '55 000', service: 'Pobór selektywny' }, { level: 8, research: 'JAS-X, okręty A26', space: 'Esrange', cyber: 'Wysoki' }, 4,
+  const stats = (id, lvl, projects = []) => w.set('countryPrivate/' + id, { countryId: id, intelLevel: lvl, projects, notes: '' });   // pola statystyk dodaje admin (System → Pola państw)
+  stats('se', 4,
     [{ id: 'vasa', name: 'PROJECT VASA', desc: 'Długoterminowy narodowy program modernizacji.', phases: [['Modernizacja gospodarki', true], ['Rozbudowa przemysłu', true], ['Modernizacja marynarki', false], ['Modernizacja lotnictwa', false], ['Niezależność energetyczna', false], ['Program kosmiczny', false]].map(([name, done]) => ({ name, done })), cost: '42 mld $', duration: '8 tur', risk: 'Medium', secrecy: 'Restricted', effects: '+CIV, +MIC, +Navy' },
       { id: 'jasx', name: 'Rozwój JAS-X', desc: 'Studium myśliwca 6. generacji.', phases: [{ name: 'Koncepcja', done: true }, { name: 'Prototyp', done: false }, { name: 'Produkcja seryjna', done: false }], cost: '12 mld $', risk: 'High', secrecy: 'Secret' }]);
-  stats('pl', { gdp: '840 mld $', budget: '37 mld $', civ: 38, mic: 26, nic: 9, population: '37,6 mln', stability: '74%', resources: 'Węgiel, miedź, srebro' }, { army: 'Duża i rosnąca', navy: 'Mała', airforce: 'F-35 / F-16', missiles: 'HIMARS, K239', intelligence: 'AW / SKW', manpower: '190 000', service: 'Ochotnicza + rezerwa' }, { level: 7, research: 'BWP Borsuk', space: 'Minimalny', cyber: 'Średni' }, 3);
-  stats('us', { gdp: '32 384,00', budget: '880 mld $ na obronę', civ: 1295.36, mic: 64.768, nic: 60, population: '349 035 494', stability: 100, warSupport: '5%', resources: 'Ropa, gaz, metale ziem rzadkich' }, { army: 'Globalna', navy: '11 grup lotniskowcowych', airforce: 'Globalne', missiles: 'Triada strategiczna', intelligence: 'CIA / NSA', manpower: '3 490 354', service: '1%' }, { level: 1, research: 'Hipersoniki, SI', space: 'NASA / USSF', cyber: 'Bardzo wysoki' }, 5);
-  stats('cn', { gdp: '19 373,00', budget: '300 mld $ na obronę (szac.)', civ: 774.92, mic: 15.4984, nic: 70, population: '1 412 914 089', stability: 90, warSupport: '2%', resources: 'Metale ziem rzadkich, węgiel' }, { army: 'Bardzo duża', navy: 'Największa liczbą okrętów', airforce: 'Flota J-20', missiles: 'Seria DF', intelligence: 'MSS', manpower: '14 129 140', service: '1%' }, { level: 9, research: 'Kwanty, hipersoniki', space: 'CNSA', cyber: 'Bardzo wysoki' }, 4);
-  stats('mx', { gdp: '1,9 bln $', budget: '14 mld $', civ: 44, mic: 6, nic: 11, population: '130 mln', stability: '58%', resources: 'Ropa, srebro' }, { army: 'Średnia', navy: 'Przybrzeżna', airforce: 'Ograniczone', missiles: '—', intelligence: 'CNI', manpower: '260 000', service: 'Obowiązkowa (losowanie)' }, { level: 5, research: '—', space: 'AEM', cyber: 'Niski' }, 2);
-  stats('ru', { gdp: '2161', civ: 86.44, mic: 21.61, population: '146 238 185', stability: 65, warSupport: '25%' }, { manpower: '1 462 381', service: '1%' }, { level: 1 }, 3);
-  ['fi', 'de'].forEach(id => stats(id, {}, {}, {}, 3));
+  stats('pl', 3);
+  stats('us', 5);
+  stats('cn', 4);
+  stats('mx', 2);
+  stats('ru', 3);
+  ['fi', 'de'].forEach(id => stats(id, 3));
 
   const cap = id => countries.find(c => c.id === id).capital;
   const chars = [

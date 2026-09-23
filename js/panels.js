@@ -1,12 +1,12 @@
 // Panele boczne: Feed, Kraj, Dyplomacja, Wywiad, Kronika
 import { S, G, run, now, newId, gameNow, turn, realGM, isAdmin, myCountry, persp, gmView, canEdit, feedItems, unitViews, statusOf,
   cFlag, cName, cDem, cColor, country, countriesSorted, userOfCountry, charView, charsOf, charLocation, writeChar,
-  STATS, NEWS_CATS, RELIABILITY, RELATIONS, REL_COLOR, TREATY_TYPES, tr, trOpts, statusChip, KINDS, VIS } from './store.js';
+  NEWS_CATS, RELIABILITY, RELATIONS, REL_COLOR, TREATY_TYPES, tr, trOpts, statusChip, KINDS, VIS } from './store.js';
 import { h, esc, form, modal, confirmBox, toast, chip, kv, download, img, searchable } from './ui.js';
 import { select } from './map.js';
 import * as U from './units.js';
 import * as P from './press.js';
-import { GM, customFields } from './gm.js';
+import { GM, customFields, statSections } from './gm.js';
 
 const goTab = t => window.dispatchEvent(new CustomEvent('ww:tab', { detail: t }));
 const ctxCountry = () => { const p = persp(); return p && p !== 'gm' ? p : null; };
@@ -126,16 +126,14 @@ function dashboard(cid) {
   const priv = S.data.countryPrivate[cid], mine = canEdit(cid), gm = realGM();
   const g = c.government || {};
   const players = userOfCountry(cid);
-  const stat = (grp, k) => priv?.[grp]?.[k] ?? '—';
   return h('div.dash',
-    h('div.dash-head', { style: { '--c': c.color } }, h('span.bigflag', c.flag), h('div', h('h2', (c.official || c.name).toUpperCase()), h('div.muted', `Capital: ${c.capital?.name || '—'} · Players: ${players.map(p => p.displayName).join(', ') || 'NPC'}`)),
+    h('div.dash-head', { style: { '--c': c.color } }, h('span.bigflag', c.flag), h('div', h('h2', (c.official || c.name).toUpperCase()), h('div.muted', `Stolica: ${c.capital?.name || '—'} · Gracze: ${players.map(p => p.displayName).join(', ') || 'NPC'}`)),
       gm ? h('div.btn-col', h('button.btn.sm', { onclick: () => GM.editCountry(cid) }, '✏️ Profil'), h('button.btn.sm', { onclick: () => GM.editStats(cid) }, '📊 Statystyki')) : null),
     h('section', h('h3', 'Władze'), kv('Tag', c.tag || c.iso2 || '—'), kv('Ustrój', g.system || '—'), kv('Partia rządząca', g.rulingParty || '—'), kv(g.headTitle || 'Głowa państwa', g.head || '—'), kv('Szef rządu', g.headOfGov || '—')),
     !priv ? h('section', h('p.muted', '🔒 Statystyki tego państwa są niejawne.')) : null,
-    [...STATS, ['Inne', []]].map(([title, fields]) => {
-      // pola standardowe + własne pola admina (jawne z profilu państwa, niejawne z części prywatnej)
-      const rows = [...(priv ? fields.map(([grp, k, l]) => [l, stat(grp, k)]) : []),
-        ...customFields().filter(f => f.section === title && (f.public || priv)).map(f => [f.label, (f.public ? c.custom?.[f.key] : priv?.custom?.[f.key]) ?? '—'])];
+    statSections().map(([title, fields]) => {
+      // pola dodane przez admina (jawne z profilu państwa, niejawne z części prywatnej)
+      const rows = fields.filter(f => f.public || priv).map(f => [f.label, String((f.public ? c.custom?.[f.key] : priv?.custom?.[f.key]) ?? '').trim() || '—']);
       return rows.length ? h('section', h('h3', title), h('div.stat-grid', rows.map(([l, v]) => h('div.stat', h('small', l), h('b', String(v)))))) : null;
     }),
     priv ? h('section', h('h3', 'Wywiad'), kv('Poziom wywiadu', `${priv.intelLevel || '—'}/5`)) : null,
