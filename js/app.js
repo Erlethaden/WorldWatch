@@ -280,7 +280,7 @@ function renderCard(key) {
       h('div.bar', h('div.fill', { 'data-dyn': 'bar' }), h('span.plane', { 'data-dyn': 'plane' }, air ? '✈' : v.kind === 'ground' ? '▸' : '⛴')),
       h('div.ap.r', h('b', code(r[r.length - 1].name)), h('small', r[r.length - 1].name), h('span', { 'data-dyn': 'eta' }))) : null,
     h('div.dyn-grid', h('div', h('small', 'Pozycja'), h('span', { 'data-dyn': 'pos' })), h('div', h('small', air ? 'Wysokość' : 'Kurs'), h('span', { 'data-dyn': 'alt' })), h('div', h('small', 'Prędkość'), h('span', { 'data-dyn': 'spd' }))),
-    h('div.lines', (v.lines || []).map(l => kv(l.k, l.v))),
+    h('div.lines', (v.lines || []).filter(Boolean).map(l => kv(l.k, l.v))),
     pax,
     sec?.legs?.length ? h('details.legs', h('summary', `Historia podróży (${sec.legs.length})`), sec.legs.slice().reverse().map(l => h('div.leg', `${G.fmtDT(l.dep)} · ${l.from} → ${l.to}`))) : null,
     acts.length ? h('div.card-actions', acts) : null));
