@@ -2,13 +2,14 @@
 import { DB, now, newId, isDemo } from './db.js';
 import { ADMIN_UIDS } from './db.js';
 import * as G from './geo.js';
+import * as SR from './searoute.js';
 import { COUNTRY_PRESETS, CITIES, SEAS } from './places.js';
 
 export const S = {
   user: null, me: null, persp: 'gm', clock: null, game: {}, lastError: null,
   data: {}, src: {}, unsubs: [], listeners: new Set(), errors: []
 };
-const ALL = ['countries', 'countryPrivate', 'characters', 'charSecrets', 'units', 'unitSecrets', 'intel', 'news', 'gmNotes', 'relations', 'treaties', 'messages', 'history', 'territories', 'users', 'logs', 'undo', 'backups'];
+const ALL = ['countries', 'countryPrivate', 'characters', 'charSecrets', 'units', 'unitSecrets', 'intel', 'news', 'gmNotes', 'relations', 'treaties', 'messages', 'history', 'territories', 'users', 'logs', 'undo', 'backups', 'blocs'];
 ALL.forEach(c => { S.data[c] = {}; S.src[c] = {}; });
 
 // ───────── zdarzenia zmian ─────────
@@ -52,11 +53,12 @@ export function startSubscriptions() {
   S.unsubs.push(DB.listenDoc('meta/admin', d => { S.admin = d || {}; emit(); }));
   ['countries', 'characters', 'units', 'relations', 'history', 'territories', 'users'].forEach(c => sub(c, 'all'));
   if (r === 'gm' || r === 'admin') {
-    ['countryPrivate', 'charSecrets', 'unitSecrets', 'intel', 'news', 'gmNotes', 'treaties', 'messages', 'undo'].forEach(c => sub(c, 'all'));
+    ['countryPrivate', 'charSecrets', 'unitSecrets', 'intel', 'news', 'gmNotes', 'treaties', 'messages', 'undo', 'blocs'].forEach(c => sub(c, 'all'));
     if (r === 'admin') { sub('logs', 'all'); sub('backups', 'all'); }
   } else {
     sub('news', 'pub', [['audienceAll', '==', true]]);
     sub('treaties', 'pub', [['secret', '==', false]]);
+    sub('blocs', 'pub', [['secret', '==', false]]);
     if (C) {
       sub('unitSecrets', 'mine', [['countryId', '==', C]]);
       sub('charSecrets', 'mine', [['countryId', '==', C]]);
@@ -64,6 +66,8 @@ export function startSubscriptions() {
       sub('news', 'mine', [['audience', 'array-contains', C]]);
       sub('treaties', 'mine', [['parties', 'array-contains', C]]);
       sub('messages', 'mine', [['parties', 'array-contains', C]]);
+      sub('blocs', 'mine', [['members', 'array-contains', C]]);
+      sub('blocs', 'inv', [['invites', 'array-contains', C]]);
       S.unsubs.push(DB.listenDoc('countryPrivate/' + C, d => setSrc('countryPrivate', 'mine', d ? [d] : [])));
     }
     // statystyki państw oznaczonych jako publiczne
@@ -172,7 +176,7 @@ export function charLocation(id, t = gameNow()) {
   let best = null;
   unitViews().forEach(v => {
     if (!(v.passengerIds || []).includes(id)) return;
-    const m = G.motion(v, t); if (!m) return;
+    const m = motionOf(v, t); if (!m) return;
     if (m.phase === 'moving' || m.phase === 'hold') best = { state: 'transit', pos: m.pos, unit: v, at: t, text: `Na pokładzie: ${v.label}` };
     else if (m.phase === 'after' && (!best || (best.state !== 'transit' && m.end > best.at))) { const d = v.route[v.route.length - 1]; best = { state: 'at', pos: d, at: m.end, text: d.name, unit: v }; }
   });
@@ -182,6 +186,11 @@ export function charLocation(id, t = gameNow()) {
 }
 
 // ───────── PROJEKCJA PUBLICZNA (co widzą inni) ─────────
+// zespoły: flota, szwadron, zgrupowanie — jeden obiekt na mapie ze składem (np. „2× fregata”)
+export const GROUP_NOUN = { ship: 'Flota', submarine: 'Grupa okrętów podwodnych', aircraft: 'Szwadron', ground: 'Zgrupowanie' };
+const GROUP_VAGUE = { ship: 'Zespół okrętów', submarine: 'Grupa okrętów podwodnych', aircraft: 'Grupa samolotów', ground: 'Zgrupowanie wojsk' };
+const compLines = sec => String(sec.composition || '').split('\n').map(l => l.trim()).filter(Boolean);
+export const groupSize = sec => sec.group && GROUP_NOUN[sec.kind] ? Math.max(1, compLines(sec).reduce((s, l) => s + (+(l.match(/^(\d+)/)?.[1]) || 1), 0)) : 0;
 const KIND_NOUN = { aircraft: 'Samolot', ship: 'Jednostka pływająca', submarine: 'Okręt podwodny', ground: 'Konwój', satellite: 'Satelita', zone: 'Strefa', base: 'Obiekt', contact: 'Kontakt' };
 export function projectUnit(sec) {
   const vis = sec.visibility || 'public';
@@ -207,14 +216,15 @@ export function projectUnit(sec) {
     return { ...base, countryId: sec.countryId, label: lim ? (sec.kind === 'zone' ? `${ZONE_TYPES[sec.zoneType]?.en || 'Aktywność'} (niepotwierdzone)` : `Obiekt (${cn})`) : sec.callsign, sub: lim ? 'Niepotwierdzone' : sec.type, zoneType: sec.zoneType || 'exercise', radiusKm: lim ? (sec.radiusKm || 50) * 1.6 : sec.radiusKm || 50, route: lim ? [G.fuzzPoint(o, (sec.radiusKm || 50) * 0.5, sec.id + 'z')] : [o],
       lines: lim ? [country, { k: 'Status', v: 'niepotwierdzone doniesienia' }] : [country, { k: 'Typ', v: sec.type || '' }, { k: 'Misja', v: sec.missionVisible ? tr('mission', sec.mission) : 'działalność rządowa' }], fuzzKm: lim ? sec.radiusKm * 0.5 : 0 };
   }
+  const gN = groupSize(sec);
   if (vis === 'public') {
-    return { ...base, countryId: sec.countryId, label: sec.callsign, sub: sec.type, route, destCc: destC, passengerIds: sec.passengersVisible ? sec.passengers || [] : [],
-      lines: [country, { k: 'Operator', v: sec.operator || '' }, { k: 'Typ', v: sec.type || K.en }, moving ? { k: 'Trasa', v: `${o.name} → ${d.name}` } : { k: 'Położenie', v: o?.name || '' }, { k: 'Misja', v: sec.missionVisible ? tr('mission', sec.mission) : 'działalność rządowa' }, { k: 'Pasażerowie', v: sec.passengersVisible ? (paxNames.join(', ') || '—') : 'TAJNE' }] };
+    return { ...base, groupN: gN, countryId: sec.countryId, label: sec.callsign, sub: gN ? `${GROUP_NOUN[sec.kind]} · ${gN} jedn.` : sec.type, route, destCc: destC, passengerIds: sec.passengersVisible ? sec.passengers || [] : [],
+      lines: [country, { k: 'Operator', v: sec.operator || '' }, { k: 'Typ', v: sec.type || K.en }, gN ? { k: 'Skład', v: compLines(sec).join(' · ') } : null, moving ? { k: 'Trasa', v: `${o.name} → ${d.name}` } : { k: 'Położenie', v: o?.name || '' }, { k: 'Misja', v: sec.missionVisible ? tr('mission', sec.mission) : 'działalność rządowa' }, { k: 'Pasażerowie', v: sec.passengersVisible ? (paxNames.join(', ') || '—') : 'TAJNE' }] };
   }
   if (vis === 'limited') {
     const fr = moving ? [o, ...route.slice(1).map((p, i) => ({ ...G.fuzzPoint(p, 90, sec.id + 'L' + i + (sec.depTime || 0)), name: '?' }))] : [G.fuzzPoint(o, 40, sec.id + 'L')];
     const cat = sec.category && sec.category !== 'Unknown' ? ' ' + tr('category', sec.category).toLowerCase() : '';
-    return { ...base, countryId: sec.countryId, label: `${KIND_NOUN[sec.kind] || 'Obiekt'}${cat} (${cn})`, sub: 'Informacja ograniczona', route: fr, destCc: destC, fuzzKm: moving ? 60 : 40,
+    return { ...base, countryId: sec.countryId, label: `${gN ? GROUP_VAGUE[sec.kind] : KIND_NOUN[sec.kind] || 'Obiekt'}${cat} (${cn})`, sub: 'Informacja ograniczona', route: fr, destCc: destC, fuzzKm: moving ? 60 : 40,
       lines: [country, moving ? { k: 'Skąd', v: o.name } : { k: 'Rejon', v: nearestPlace(o) }, moving ? { k: 'Kierunek', v: destC ? `w stronę: ${cName(destC)}` : G.compass(G.bearing(o, d)) } : null, { k: 'Misja', v: sec.missionVisible ? `prawdopodobnie ${tr('mission', sec.mission).toLowerCase()}` : 'nieznana' }, { k: 'Pasażerowie', v: 'TAJNE' }].filter(Boolean) };
   }
   // classified
@@ -227,13 +237,14 @@ export function projectUnit(sec) {
 // ───────── WIDOKI OBIEKTÓW (zależne od perspektywy) ─────────
 function fullView(sec) {
   const K = KINDS[sec.kind] || KINDS.aircraft, route = sec.route || [], o = route[0], d = route[route.length - 1];
-  const pax = (sec.passengers || []).map(charName);
+  const pax = (sec.passengers || []).map(charName), gN = groupSize(sec);
   return {
-    ...sec, key: 'u:' + sec.id, src: 'full', label: sec.callsign || sec.name || K.en, sub: sec.type || K.en, passengerIds: sec.passengers || [],
+    ...sec, key: 'u:' + sec.id, src: 'full', groupN: gN, label: sec.callsign || sec.name || K.en, sub: gN ? `${GROUP_NOUN[sec.kind]} · ${gN} jedn.` : sec.type || K.en, passengerIds: sec.passengers || [],
     destCc: countryAtPlace(d), radiusKm: sec.radiusKm, sat: sec.sat, canEdit: canEdit(sec.countryId),
     lines: [
       { k: 'Państwo', v: `${cFlag(sec.countryId)} ${cName(sec.countryId)}` }, sec.operator ? { k: 'Operator', v: sec.operator } : null,
       { k: 'Typ', v: `${sec.type || K.en}${sec.category ? ' · ' + tr('category', sec.category) : ''}` },
+      gN ? { k: 'Skład', v: compLines(sec).join(' · ') } : null,
       route.length > 1 ? { k: 'Trasa', v: route.map(p => p.name).join(' → ') } : o ? { k: 'Położenie', v: o.name } : null,
       { k: 'Misja', v: tr('mission', sec.mission) || 'nieznana' }, ['aircraft', 'ship', 'submarine', 'ground'].includes(sec.kind) && !pax.length ? { k: 'Pasażerowie', v: '—' } : null,
       { k: 'Widoczność', v: VIS[sec.visibility] || sec.visibility }, sec.notes ? { k: 'Notatki', v: sec.notes } : null
@@ -268,7 +279,7 @@ export function statusOf(v, t = gameNow()) {
   if (v.kind === 'satellite') return 'IN ORBIT';
   if (v.kind === 'zone') return 'ACTIVE';
   if (v.kind === 'base') return 'OPERATIONAL';
-  const m = G.motion(v, t); if (!m) return '—';
+  const m = motionOf(v, t); if (!m) return '—';
   const air = v.kind === 'aircraft';
   return { static: air ? 'ON GROUND' : v.kind === 'contact' ? 'DETECTED' : 'STATIONARY', before: air ? 'SCHEDULED' : 'IN PORT', moving: air ? 'AIRBORNE' : 'UNDERWAY', hold: 'HOLDING', after: air ? 'LANDED' : 'ARRIVED' }[m.phase];
 }
@@ -276,9 +287,13 @@ export const statusChip = (v, t) => { const k = statusOf(v, t); return { key: k,
 export function posOf(v, t = gameNow()) {
   if (v.kind === 'satellite' && v.sat) return { pos: G.satPos(v.sat, t), heading: 90, phase: 'moving' };
   if (v.pos && !v.route) return { pos: v.pos, heading: 0, phase: 'static' };
-  return G.motion(v, t);
+  return motionOf(v, t);
 }
-export function speedKmh(v) { const r = v.route || []; return r.length > 1 && v.duration ? G.routeKm(r) / (v.duration / 3600000) : 0; }
+// okręty płyną po morzu: trasa z rozkazu rozwinięta w szlak omijający ląd (samoloty dalej po wielkim kole)
+export const NAVAL = new Set(['ship', 'submarine']);
+export const travelRoute = v => NAVAL.has(v.kind) && (v.route || []).length && SR.ready() ? SR.seaPath(v.route) : v.route;
+export const motionOf = (v, t) => { const r = travelRoute(v); return G.motion(r === v.route ? v : { ...v, route: r }, t); };
+export function speedKmh(v) { const r = travelRoute(v) || []; return r.length > 1 && v.duration ? G.routeKm(r) / (v.duration / 3600000) : 0; }
 
 // ───────── FEED (co ta perspektywa „wie”) ─────────
 export function feedItems() {
@@ -291,7 +306,7 @@ export function feedItems() {
   });
   unitViews().forEach(v => {
     if (!['aircraft', 'ship', 'submarine', 'ground', 'contact'].includes(v.kind) || (v.route || []).length < 2 || !v.duration) return;
-    const m = G.motion(v, t); if (!m) return;
+    const m = motionOf(v, t); if (!m) return;
     const air = v.kind === 'aircraft', ic = air ? '✈️' : v.kind === 'ground' ? '🪖' : '🚢', fl = v.countryId ? cFlag(v.countryId) + ' ' : '';
     const o = v.route[0], d = v.route[v.route.length - 1], known = v.src === 'full' || v.visibility === 'public';
     const own = v.src === 'full' && v.countryId === P;
@@ -308,15 +323,18 @@ export function feedItems() {
     }
     if (m.end <= t && m.end > horizon && v.kind !== 'contact') {
       let txt;
-      if (known) txt = `${fl}${v.label} — ${air ? 'lądowanie' : 'dotarł'}: ${d.name}`;
-      else if (v.visibility === 'limited') txt = `${fl}${v.label} — dotarł do: ${v.destCc ? cName(v.destCc) : nearestPlace(d)}`;
-      else txt = `Utracono kontakt w rejonie: ${nearestPlace(d)}`;
+      if (known) txt = `${fl}${v.label} — ${air ? 'wylądował' : 'dotarł'}: ${d.name}`;
+      else if (v.visibility === 'limited') txt = `${fl}${v.label} — ${air ? 'wylądował' : 'dotarł'} w: ${v.destCc ? cName(v.destCc) : nearestPlace(d)}`;
+      else return;   // tajne / nieznane: bez komunikatu o dotarciu
       items.push({ id: `l:${v.key}:${m.end}`, t: m.end, type: 'move', icon: known || v.visibility === 'limited' ? (air ? '🛬' : '⚓') : '❔', text: txt, unitKey: v.key, own, important: own || v.destCc === P });
     }
   });
   Object.values(S.data.intel).forEach(i => {
     if (i.toCountry !== P || !i.createdGame) return;
     items.push({ id: 'i:' + i.id, t: i.createdGame, type: 'intel', icon: '📡', text: `${i.label}${i.confidence != null ? ` — pewność ${i.confidence}%` : ''}`, unitKey: i.route || i.pos ? 'i:' + i.id : null, important: true });
+  });
+  Object.values(S.data.blocs).forEach(b => {
+    if (P && P !== 'gm' && (b.invites || []).includes(P)) items.push({ id: `b:${b.id}:${P}`, t: t, type: 'msg', icon: '🏛', text: `Zaproszenie do: ${b.name}`, important: true });
   });
   Object.values(S.data.messages).forEach(m => {
     if (!P || P === 'gm' || m.to !== P) return;
@@ -412,7 +430,7 @@ export function writeChar(w, c) {
 }
 
 // ───────── BACKUPY ─────────
-export const BACKUP_COLS = ['countries', 'countryPrivate', 'characters', 'charSecrets', 'units', 'unitSecrets', 'intel', 'news', 'gmNotes', 'relations', 'treaties', 'messages', 'history', 'territories', 'images', 'users', 'meta'];
+export const BACKUP_COLS = ['countries', 'countryPrivate', 'characters', 'charSecrets', 'units', 'unitSecrets', 'intel', 'news', 'gmNotes', 'relations', 'treaties', 'messages', 'history', 'territories', 'images', 'blocs', 'users', 'meta'];
 export async function snapshotWorld() {
   const data = {};
   for (const c of BACKUP_COLS) data[c] = await DB.getAll(c);

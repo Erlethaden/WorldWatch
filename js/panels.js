@@ -7,6 +7,8 @@ import { select } from './map.js';
 import * as U from './units.js';
 import * as P from './press.js';
 import { GM, customFields, statSections } from './gm.js';
+import { blocsSection, blocsOf } from './blocs.js';
+import { battleForm, battleBlock } from './battle.js';
 
 const goTab = t => window.dispatchEvent(new CustomEvent('ww:tab', { detail: t }));
 const ctxCountry = () => { const p = persp(); return p && p !== 'gm' ? p : null; };
@@ -25,7 +27,7 @@ const feed = {
     const items = feedItems().filter(i => feedFilter === 'all' || (feedFilter === 'news' ? i.type === 'news' : feedFilter === 'move' ? i.type === 'move' : feedFilter === 'intel' ? i.type === 'intel' || i.type === 'msg' : true));
     const unread = S.unread?.size || 0;
     return h('div.feed',
-      h('div.feed-head', h('div', h('h2', '🌍 WORLDWATCH'), h('div.muted', unread ? h('span.new', `🔴 ${unread} NEW EVENTS`) : `${G.fmtDT(gameNow())} UTC`)),
+      h('div.feed-head', h('div', h('h2', 'Aktualności'), unread ? h('div.new', `${unread} ${unread === 1 ? 'nowe zdarzenie' : unread < 5 ? 'nowe zdarzenia' : 'nowych zdarzeń'}`) : null),
         h('div.btn-row', realGM() ? [h('button.btn.sm.primary', { onclick: () => feed.create('news') }, '🔴 Wiadomość'), h('button.btn.sm', { onclick: () => feed.create('paper') }, '🗞️'), h('button.btn.sm', { onclick: () => feed.create('card') }, '🖼️')] : myCountry() ? h('button.btn.sm', { onclick: () => feed.create('statement') }, '📢 Oświadczenie') : null)),
       h('div.filters', [['all', 'Wszystko'], ['news', 'Wiadomości'], ['move', 'Ruchy'], ['intel', 'Wywiad / prywatne']].map(([k, l]) => h('button.chip' + (feedFilter === k ? '.on' : ''), { onclick: () => { feedFilter = k; goTab('feed'); } }, l))),
       items.length ? items.map(feedItem) : h('div.empty', 'Cisza w eterze. Jeszcze nic się nie wydarzyło.'));
@@ -67,6 +69,7 @@ export async function newsForm(n, statement) {
       { k: 'reliabilityPct', label: 'Wiarygodność %', type: 'number', value: n.reliabilityPct, help: 'opcjonalnie, np. 32' },
       { k: 'leak', label: 'Oznacz jako przeciek (LEAK)', type: 'check', value: n.leak },
       { k: 'breaking', label: 'PILNA WIADOMOŚĆ (breaking)', type: 'check', value: n.breaking },
+      { k: 'special', label: 'Wydanie specjalne (na cały ekran u odbiorców)', type: 'check', value: n.special },
       { k: 'truth', label: 'Prawda (tylko GM)', type: 'select', value: truth || 'true', options: [['true', 'Prawdziwa'], ['partial', 'Częściowo prawdziwa'], ['false', 'Fałszywa / dezinformacja']] },
       { k: 'countries', label: 'Dotyczy państw', type: 'multi', value: n.countries, options: cOpts },
       { k: 'audienceAll', label: 'Widoczne dla wszystkich', type: 'check', value: n.audienceAll },
@@ -81,7 +84,7 @@ export async function newsForm(n, statement) {
   const id = n.id || newId();
   const doc = { ...n, ...v, place: v.place ? { name: v.place.name, lat: +v.place.lat, lon: +v.place.lon } : null, createdAt: n.createdAt || now(), gameTime: v.gameTime || n.gameTime || gameNow() };
   delete doc.id; delete doc.truth; delete doc.chronicle;
-  if (!gm) Object.assign(doc, { authorCountry: C, source: 'player', official: true, audienceAll: true, audience: [], countries: [C], reliability: 'Confirmed', breaking: false });
+  if (!gm) Object.assign(doc, { authorCountry: C, source: 'player', official: true, audienceAll: true, audience: [], countries: [C], reliability: 'Confirmed', breaking: false, special: false });
   else { doc.source = 'gm'; if (doc.audienceAll) doc.audience = []; }
   await run(isNew ? 'PUBLISH_NEWS' : 'UPDATE_NEWS', v.headline, w => {
     w.set('news/' + id, doc);
@@ -96,12 +99,12 @@ export function openNews(id) {
   const m = modal(n.breaking ? '🔴 PILNA WIADOMOŚĆ' : tr('news', n.category) || 'Wiadomość', h('div.article',
     n.paper ? h('div.paper-wrap', P.renderPaper(n.paper)) : null,
     n.card ? h('div.paper-wrap', P.renderCard(n.card)) : null,
-    !n.paper ? [h('h2', withFlags(n)), h('div.muted', `${G.fmtDT(n.gameTime)} UTC · ${tr('news', n.category)}`), n.imageUrl ? img(n.imageUrl, '.news-img') : null, n.body ? h('p', n.body) : null] : null,
+    !n.paper ? [h('h2', withFlags(n)), h('div.muted', `${G.fmtDT(n.gameTime)} UTC · ${tr('news', n.category)}`), n.imageUrl ? img(n.imageUrl, '.news-img') : null, battleBlock(n), n.body ? h('p', n.body) : null] : null,
     h('div.news-foot', n.reliability ? h('span.relia.' + (relClass[n.reliability] || ''), `Wiarygodność: ${tr('reliability', n.reliability)}${n.reliabilityPct != null ? ' · ' + n.reliabilityPct + '%' : ''}`) : null, n.official ? chip('OFICJALNE OŚWIADCZENIE — ' + cName(n.authorCountry), 'off') : null),
     gm ? h('div.gm-box', h('b', 'GM: '), `prawda: ${truth === 'false' ? '❌ fałsz' : truth === 'partial' ? '◐ częściowo' : '✅ prawda'} · widzą: ${n.audienceAll ? 'wszyscy' : (n.audience || []).map(cName).join(', ')}`) : null,
     h('div.btn-row.wrap',
       n.place ? h('button.btn.sm', { onclick: () => { m.close(); import('./map.js').then(M => M.flyTo(n.place.lat, n.place.lon, 6)); } }, '📍 Na mapie') : null,
-      gm ? [h('button.btn.sm', { onclick: () => { m.close(); newsForm({ ...n, id }); } }, '✏️ Edytuj'),
+      gm ? [h('button.btn.sm', { onclick: () => { m.close(); n.battle ? battleForm({ ...n, id }) : newsForm({ ...n, id }); } }, '✏️ Edytuj'),
         h('button.btn.sm', { onclick: () => { m.close(); P.newspaper({ newsId: id }); } }, '🗞️ Gazeta z tego'),
         h('button.btn.sm', { onclick: () => { m.close(); P.eventCard({ newsId: id }); } }, '🖼️ Grafika'),
         h('button.btn.sm', { onclick: () => run('ADD_CHRONICLE', n.headline, w => w.set('history/' + newId(), { turn: turn(), gameTime: n.gameTime, text: n.headline, countries: n.countries || [], createdAt: now() })) }, '📜 Do kroniki'),
@@ -139,6 +142,7 @@ function dashboard(cid) {
     priv ? h('section', h('h3', 'Wywiad'), kv('Poziom wywiadu', `${priv.intelLevel || '—'}/5`)) : null,
     h('section', h('h3', 'Dyplomacja'),
       h('div.rel-list', countriesSorted().filter(o => o.id !== cid).map(o => { const r = relationOf(cid, o.id); return r === 'Neutral' ? null : h('div.rel-row', `${o.flag} ${o.name}`, relBadge(r)); })),
+      blocsOf(cid).length ? h('div.treaty-mini', blocsOf(cid).map(b => h('div', `🏛 ${b.secret ? '🔒 ' : ''}${b.name}${b.tag ? ` (${b.tag})` : ''} · ${b.type || ''}`))) : null,
       h('div.treaty-mini', Object.values(S.data.treaties).filter(t => (t.parties || []).includes(cid) && t.status !== 'ended').map(t => h('div', `${t.secret ? '🔒 ' : '📜 '}${t.name} — ${t.parties.map(cFlag).join('')} (${TSTAT[t.status] || t.status})`)))),
     priv ? projectsSection(cid, priv, mine) : null,
     territorySection(cid),
@@ -214,6 +218,7 @@ const diplo = {
         const r = relationOf(me, o.id);
         return h('div.rel-row', h('span', `${o.flag} ${o.name}`), canEdit(me) ? h('select.rel-sel', { style: { '--c': REL_COLOR[r] }, onchange: e => setRelation(me, o.id, e.target.value) }, RELATIONS.map(x => h('option', { value: x, selected: x === r }, tr('relation', x)))) : relBadge(r));
       }))) : gm ? allRelations() : null,
+      blocsSection(me),
       treatiesSection(me),
       me ? channels(me, others) : gm ? allChannels() : null);
   }

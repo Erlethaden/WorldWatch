@@ -1,9 +1,10 @@
 // Mapa świata (Leaflet): warstwy, markery ruchome, trasy, strefy, linie sojuszy, niepewność pozycji
-import { S, unitViews, posOf, gameNow, cColor, cFlag, cName, country, persp, gmView, KINDS, ZONE_TYPES, REL_COLOR, charView, charLocation, statusOf, G, myCountry, realGM } from './store.js';
+import { S, travelRoute, motionOf, NAVAL, unitViews, posOf, gameNow, cColor, cFlag, cName, country, persp, gmView, KINDS, ZONE_TYPES, REL_COLOR, charView, charLocation, statusOf, G, myCountry, realGM } from './store.js';
 import { h, esc, toast } from './ui.js';
 import { CARTO_KEY } from './db.js';
 import { COUNTRY_PRESETS, CITIES } from './places.js';
 import { flagOf, tr as trl } from './store.js';
+import * as SR from './searoute.js';
 
 // Leaflet 1.9: tooltip otwierany (po przeciągnięciu mapy / focusie) na warstwie, której tooltip już usunięto → „_source of null”
 { const P = L.Layer.prototype;
@@ -19,6 +20,13 @@ export const LAYERS = [
 let enabled = new Set(LAYERS.map(l => l.k).filter(k => k !== 'trade'));
 try { const s = JSON.parse(localStorage.getItem('ww_layers') || 'null'); if (Array.isArray(s)) enabled = new Set(s); } catch { }
 export const isOn = k => enabled.has(k);
+// linie traktatów / handlu / konfliktów: GM i obserwator mogą widzieć wszystkie, inaczej tylko linie klikniętego (albo własnego) państwa
+let lineFocus = null, linesAll = true;
+export const canSeeAllLines = () => realGM() ? persp() === 'gm' || persp() === null : !myCountry();
+export const linesMode = () => ({ all: canSeeAllLines() && linesAll, focus: lineFocus || (persp() !== 'gm' ? persp() : null) });
+export function setLinesAll(v) { linesAll = v; render(); }
+export function setLineFocus(id) { lineFocus = id; render(); }
+const showPair = (a, b) => { const m = linesMode(); return m.all || (!!m.focus && (a === m.focus || b === m.focus)); };
 export function toggleLayer(k) { enabled.has(k) ? enabled.delete(k) : enabled.add(k); try { localStorage.setItem('ww_layers', JSON.stringify([...enabled])); } catch { } render(); }
 
 let map, geo, groups = {}, markers = new Map(), selLayer, selected = null, pickCb = null, onSelect = () => { }, onCountry = () => { };
@@ -48,7 +56,7 @@ export function colorOf(v) {
 }
 
 export function initMap(el, { onSelectUnit, onCountryClick }) {
-  onSelect = onSelectUnit; onCountry = onCountryClick;
+  onSelect = onSelectUnit; onCountry = id => { lineFocus = id; render(); onCountryClick(id); };
   if (map) { map.remove(); markers.clear(); geo = null; }
   map = L.map(el, { worldCopyJump: true, minZoom: 2, maxZoom: CARTO_KEY ? 12 : 8, zoomControl: false, preferCanvas: false }).setView([50, 15], 4);
   L.control.zoom({ position: 'bottomright' }).addTo(map);
@@ -77,6 +85,7 @@ export function initMap(el, { onSelectUnit, onCountryClick }) {
       polys.forEach(poly => poly.forEach(ring => { let off = 0; for (let i = 1; i < ring.length; i++) { const d = ring[i][0] + off - ring[i - 1][0]; if (d > 180) off -= 360; else if (d < -180) off += 360; ring[i][0] += off; } }));
     });
     if (!CARTO_KEY) L.geoJSON(fc, { pane: 'land', renderer: L.canvas({ pane: 'land', padding: 0.5 }), interactive: false, style: { stroke: false, fillColor: '#18222e', fillOpacity: 1 } }).addTo(map);
+    setTimeout(() => { try { SR.init(fc); render(); } catch (e) { console.warn('searoute', e); } }, 50);   // maska wody dla szlaków morskich
     geo = L.geoJSON(fc, { style: styleCountry, onEachFeature: (f, l) => l.on('click', e => { if (pickCb || drawCb) return; const t = terrByIso(f.id), c = t ? { id: t.controller } : byIsoN(f.id); if (c) { L.DomEvent.stop(e); onCountry(c.id); } }) }).addTo(groups.countries);
   }).catch(e => { console.error('geo', e); toast('⚠️ Nie wczytano konturów mapy: ' + e.message, 'err', 20000); });
   map.on('click', e => {
@@ -127,6 +136,9 @@ export function shapeCenter(mp) {
 export function focusCountry(isoN) { const f = featureOf(isoN); if (f) map.fitBounds(f.getBounds(), { padding: [30, 30], maxZoom: 6 }); }
 export const geoNames = () => geo ? geo.getLayers().map(l => ({ isoN: String(l.feature.id), name: npcOf(l.feature.id)?.name || l.feature.properties.name })).sort((a, b) => a.name.localeCompare(b.name)) : [];
 function styleCountry(f) {
+  // podświetlony sojusz (Dyplomacja → Pokaż na mapie)
+  const fb = S.focusBloc && S.data.blocs?.[S.focusBloc];
+  if (fb && (fb.members || []).some(m => String(m).startsWith('n:') ? m.slice(2) === String(f.id) : String(S.data.countries[m]?.isoN) === String(f.id))) return { color: fb.color, weight: 2.5, opacity: 1, fillColor: fb.color, fillOpacity: 0.35 };
   const t = terrByIso(f.id); if (t) return terrStyle(t);
   const c = byIsoN(f.id);
   if (!c) return { color: '#3a4a5e', weight: 0.7, opacity: 0.8, fillColor: '#8a93a0', fillOpacity: 0.05 };   // NPC
@@ -217,13 +229,15 @@ function unitIcon(v, heading) {
   const showLbl = map.getZoom() >= 4;
   return L.divIcon({
     className: '', iconSize: [26, 26], iconAnchor: [13, 13],
-    html: `<div class="${cls}" style="color:${col}"><svg viewBox="0 0 24 24" width="24" height="24" style="transform:rotate(${rot}deg)" fill="${col}">${ICON[k]}</svg>${showLbl ? `<span class="u-lbl">${esc(v.label)}</span>` : ''}</div>`
+    html: `<div class="${cls}" style="color:${col}">${v.groupN > 1 ? `<b class="u-cnt">${v.groupN}</b>` : ''}<svg viewBox="0 0 24 24" width="24" height="24" style="transform:rotate(${rot}deg)" fill="${col}">${ICON[k]}</svg>${showLbl ? `<span class="u-lbl">${esc(v.label)}</span>` : ''}</div>`
   });
 }
 
 // ─── pełne przerysowanie po zmianie danych ───
 export function render() {
   if (!map) return;
+  // kontury państw nie są przystankami klawisza Tab (inaczej ~250 kroków do panelu)
+  setTimeout(() => map.getContainer().querySelectorAll('path.leaflet-interactive').forEach(p => p.setAttribute('tabindex', '-1')));
   if (geo) { geo.setStyle(styleCountry); geo.eachLayer(l => { const t = terrByIso(l.feature.id), g = byIsoN(l.feature.id), n = npcOf(l.feature.id); if (t) l.bindTooltip(terrTip(t), { sticky: true }); else if (!g) l.bindTooltip(`${n?.flag || '🏳️'} ${esc(n?.name || l.feature.properties.name)} <small>· NPC, bez statystyk</small>`, { sticky: true }); else l.unbindTooltip(); }); }
   groups.static.clearLayers(); groups.lines.clearLayers();
   Object.values(S.data.territories).filter(t => t.kind === 'area' && (t.geo || t.points?.length > 2)).forEach(t =>
@@ -240,8 +254,8 @@ export function render() {
       return;
     }
     if (!isOn(lay)) return;
+    const p = posOf(v, t); if (!p || landed(v, p)) return;
     keys.add(v.key);
-    const p = posOf(v, t); if (!p) return;
     let mk = markers.get(v.key);
     const sig = `${v.label}|${colorOf(v)}|${v.src}|${v.kind}|${selected === v.key}|${map.getZoom() >= 4}|${v.statusOverride}|${Math.round((p.heading || 0) / 5)}`;
     if (!mk) {
@@ -259,14 +273,26 @@ export function render() {
 
   // linie traktatów i wojen
   const cap = id => country(id)?.capital;
-  const line = (a, b, style, tip) => { const A = cap(a), B = cap(b); if (!A || !B) return; L.polyline(G.gcLine([A, B], 32), { pane: 'lines', ...style }).bindTooltip(tip, { sticky: true }).addTo(groups.lines); };
+  const line = (a, b, style, tip) => { if (!showPair(a, b)) return; const A = cap(a), B = cap(b); if (!A || !B) return; L.polyline(G.gcLine([A, B], 32), { pane: 'lines', ...style }).bindTooltip(tip, { sticky: true }).addTo(groups.lines); };
+  // szlak handlowy: stolica → port (przerywana) → trasa po morzu → port → stolica
+  const seaLine = (a, b, secret, tip) => {
+    if (!showPair(a, b)) return;
+    const A = cap(a), B = cap(b); if (!A || !B) return;
+    const r = SR.seaRoute(A, B);
+    if (!r) return line(a, b, { color: '#f5b301', weight: 1.5, opacity: 0.7, dashArray: '2 6' }, tip);
+    const g = L.featureGroup().bindTooltip(tip, { sticky: true }).addTo(groups.lines);
+    // trasa przez Pacyfik wychodzi poza ±180°, więc rysujemy też kopie przesunięte o 360°
+    [-360, 0, 360].forEach(o => L.polyline(o ? r.sea.map(([la, lo]) => [la, lo + o]) : r.sea, { pane: 'lines', color: '#f5b301', weight: 2, opacity: 0.8, dashArray: secret ? '2 6' : null, lineJoin: 'round' }).addTo(g));
+    [[[A.lat, A.lon], r.from], [r.to, [B.lat, B.lon + 360 * Math.round((r.to[1] - B.lon) / 360)]]].forEach(seg => L.polyline(seg, { pane: 'lines', color: '#f5b301', weight: 1, opacity: 0.5, dashArray: '1 5' }).addTo(g));
+  };
   Object.values(S.data.treaties).forEach(tr => {
     if (tr.status === 'ended' || tr.status === 'proposed') return;
     const trade = /Trade|Technology/.test(tr.type);
     if (!isOn(trade ? 'trade' : 'alliances')) return;
     const ps = tr.parties || [];
+    const tip = `${tr.secret ? '🔒 ' : ''}${esc(tr.name)} · ${esc(trl('treaty', tr.type))}`;
     for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++)
-      line(ps[i], ps[j], { color: trade ? '#f5b301' : '#3fa7ff', weight: trade ? 1.5 : 2, opacity: 0.7, dashArray: tr.secret ? '2 6' : null }, `${tr.secret ? '🔒 ' : ''}${esc(tr.name)} · ${esc(trl('treaty', tr.type))}`);
+      trade ? seaLine(ps[i], ps[j], tr.secret, tip) : line(ps[i], ps[j], { color: '#3fa7ff', weight: 2, opacity: 0.7, dashArray: tr.secret ? '2 6' : null }, tip);
   });
   if (isOn('conflicts')) Object.values(S.data.relations).forEach(r => { if (r.status === 'At War' || r.status === 'Hostile') line(r.parties[0], r.parties[1], { color: REL_COLOR[r.status], weight: r.status === 'At War' ? 3 : 1.5, opacity: 0.8, dashArray: r.status === 'At War' ? '10 6' : '4 8' }, `${cFlag(r.parties[0])} ${cFlag(r.parties[1])} ${trl('relation', r.status)}`); });
 
@@ -284,11 +310,11 @@ export function render() {
     Object.values(spots).forEach(s => L.marker([s.pos.lat, s.pos.lon], { icon: L.divIcon({ className: '', iconSize: [22, 22], iconAnchor: [11, 11], html: `<div class="dip-pin">🏛️<b>${s.list.length}</b></div>` }) })
       .bindTooltip(s.list.map(c => `${cFlag(c.countryId)} ${esc(c.icon || '')} ${esc(c.title || '')} ${esc(c.name)}`).join('<br>'), { direction: 'top' }).addTo(groups.static));
   }
-  if (isOn('news')) Object.values(S.data.news).forEach(n => {
-    if (!n.place || (n.gameTime || 0) > t) return;
+  if (isOn('news') || isOn('conflicts')) Object.values(S.data.news).forEach(n => {
+    if (!n.place || (n.gameTime || 0) > t || !isOn(n.battle ? 'conflicts' : 'news') && !(n.battle && isOn('news'))) return;
     if (!gmView() && !n.audienceAll && !(n.audience || []).includes(persp())) return;
-    L.marker([n.place.lat, n.place.lon], { icon: L.divIcon({ className: '', iconSize: [22, 22], iconAnchor: [11, 11], html: `<div class="news-pin${n.breaking ? ' br' : ''}">📰</div>` }) })
-      .bindTooltip(`<b>${esc(n.headline)}</b><br><small>${esc(n.category || '')} · ${esc(n.reliability || '')}</small>`, { direction: 'top' }).on('click', () => window.dispatchEvent(new CustomEvent('ww:news', { detail: n.id }))).addTo(groups.static);
+    L.marker([n.place.lat, n.place.lon], { icon: L.divIcon({ className: '', iconSize: [22, 22], iconAnchor: [11, 11], html: n.battle ? `<div class="news-pin battle-pin">💥</div>` : `<div class="news-pin${n.breaking ? ' br' : ''}">📰</div>` }) })
+      .bindTooltip(`<b>${esc(n.headline)}</b><br><small>${esc(trl('news', n.category))} · ${esc(trl('reliability', n.reliability))}</small>`, { direction: 'top' }).on('click', () => window.dispatchEvent(new CustomEvent('ww:news', { detail: n.id }))).addTo(groups.static);
   });
   drawSelection();
 }
@@ -299,27 +325,39 @@ function drawSelection() {
   if (!v) return;
   const t = gameNow();
   if (v.route && v.route.length > 1) {
-    const m = G.motion(v, t), col = colorOf(v);
-    if (!v.hideFuture) L.polyline(G.gcLine(v.route), { color: col, weight: 2, opacity: 0.8, dashArray: '6 6', interactive: false }).addTo(selLayer);
+    const m = motionOf(v, t), col = colorOf(v), path = travelRoute(v);
+    const draw = pts => NAVAL.has(v.kind) ? G.unwrap(pts) : G.gcLine(pts);   // szlak morski ma już gęste punkty
+    if (!v.hideFuture) L.polyline(draw(path), { color: col, weight: 2, opacity: 0.8, dashArray: '6 6', interactive: false }).addTo(selLayer);
     if (m && m.phase !== 'before') {
-      const done = v.route.slice(0, m.seg + 1).concat([m.pos]);
-      L.polyline(G.gcLine(done), { color: col, weight: 3, opacity: 0.95, interactive: false }).addTo(selLayer);
+      const done = path.slice(0, m.seg + 1).concat([m.pos]);
+      L.polyline(draw(done), { color: col, weight: 3, opacity: 0.95, interactive: false }).addTo(selLayer);
     }
-    if (!v.hideFuture) v.route.forEach((p, i) => L.circleMarker([p.lat, p.lon], { radius: i === 0 || i === v.route.length - 1 ? 5 : 3, color: col, fillColor: '#0b0f14', fillOpacity: 1, weight: 2 }).bindTooltip(esc(p.name || '?')).addTo(selLayer));
+    const wps = NAVAL.has(v.kind) ? path.filter(p => p.wp) : v.route;
+    if (!v.hideFuture) wps.forEach((p, i) => L.circleMarker([p.lat, p.lon], { radius: i === 0 || i === wps.length - 1 ? 5 : 3, color: col, fillColor: '#0b0f14', fillOpacity: 1, weight: 2 }).bindTooltip(esc(p.name || '?')).addTo(selLayer));
   }
 }
 
 export function select(key, fly) {
   selected = key; onSelect(key);
   render();
-  if (fly && key) { const v = unitViews().find(x => x.key === key); const p = v && posOf(v); if (p) map.flyTo([p.pos.lat, p.pos.lon], Math.max(map.getZoom(), 5), { duration: 0.8 }); }
+  const phone = matchMedia('(max-width: 820px)').matches;
+  if (key && (fly || phone)) {
+    const v = unitViews().find(x => x.key === key); const p = v && posOf(v); if (!p) return;
+    const z = fly ? Math.max(map.getZoom(), 5) : map.getZoom();
+    // telefon: karta zasłania dół ekranu, więc obiekt ląduje w górnej, widocznej części mapy
+    const c = phone ? map.unproject(map.project([p.pos.lat, p.pos.lon], z).add([0, map.getSize().y * 0.27]), z) : [p.pos.lat, p.pos.lon];
+    fly ? map.flyTo(c, z, { duration: 0.8 }) : map.panTo(c, { duration: 0.4 });
+  }
 }
 export function flyTo(lat, lon, z = 5) { map && map.flyTo([lat, lon], z, { duration: 0.8 }); }
 
+// samolot po wylądowaniu znika z mapy (zostaje na listach; wraca po wybraniu go albo przy nowej podróży)
+const landed = (v, p) => v.kind === 'aircraft' && p.phase === 'after' && selected !== v.key;
 function tick() {
   const t = gameNow();
   for (const [, mk] of markers) {
     const p = posOf(mk.v, t); if (!p) continue;
+    if (landed(mk.v, p)) { render(); break; }
     mk.m.setLatLng([p.pos.lat, p.pos.lon]); mk.c && mk.c.setLatLng([p.pos.lat, p.pos.lon]);
     if (ROTATE.has(mk.v.kind)) { const svg = mk.m.getElement()?.querySelector('svg'); if (svg) svg.style.transform = `rotate(${p.heading || 0}deg)`; }
   }

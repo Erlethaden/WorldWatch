@@ -198,7 +198,7 @@ async function newTurn() {
     if (v.adv) { const c = S.clock || {}; w.set('meta/clock', { running: c.running !== false, rate: c.rate || 1, anchorGame: g, anchorReal: now() }); }
     if (v.summary) w.set('history/' + newId(), { turn: T, gameTime: gameNow(), text: v.summary, countries: [], createdAt: now() });
     w.set('history/' + newId(), { turn: T + 1, gameTime: g, text: `Rozpoczyna się tura ${T + 1}.`, countries: [], createdAt: now(), system: true });
-    if (S.game.turnNews !== false) w.set('news/' + newId(), { headline: `⏭ ROZPOCZYNA SIĘ TURA ${T + 1}`, body: v.summary || '', category: 'Politics', reliability: 'Confirmed', breaking: true, countries: [], gameTime: g, createdAt: now(), audienceAll: true, audience: [], source: 'gm', system: true });
+    if (S.game.turnNews !== false) w.set('news/' + newId(), { headline: `⏭ ROZPOCZYNA SIĘ TURA ${T + 1}`, body: v.summary || '', category: 'Politics', reliability: 'Confirmed', breaking: true, special: true, countries: [], gameTime: g, createdAt: now(), audienceAll: true, audience: [], source: 'gm', system: true });
   });
   toast(`Rozpoczęto turę ${T + 1}`, 'ok');
 }
@@ -398,7 +398,7 @@ function settings() {
 async function wipeWorld() {
   if (!await confirmBox('Usunąć WSZYSTKIE państwa, obiekty, postacie, newsy, traktaty, wiadomości i kronikę? Gracze, backupy i logi zostają. Najpierw zrobię backup.', { danger: true, ok: 'Wyczyść' })) return;
   const b = await createBackup('Przed wyczyszczeniem', { auto: false, reason: 'pre-wipe', quiet: true }); if (!b) return;
-  const cols = ['countries', 'countryPrivate', 'characters', 'charSecrets', 'units', 'unitSecrets', 'intel', 'news', 'gmNotes', 'relations', 'treaties', 'messages', 'history', 'territories'];
+  const cols = ['countries', 'countryPrivate', 'characters', 'charSecrets', 'units', 'unitSecrets', 'intel', 'news', 'gmNotes', 'relations', 'treaties', 'messages', 'history', 'territories', 'blocs'];
   await run('WIPE_WORLD', '', w => cols.forEach(c => Object.keys(S.data[c]).forEach(id => w.del(`${c}/${id}`))), { undo: false });
 }
 
@@ -416,7 +416,7 @@ async function factoryReset() {
   if (!v) return;
   if (v.confirm.toUpperCase() !== 'USUŃ') return toast('Nie potwierdzono — nic nie usunięto', 'info');
   if (v.download) download(`worldwatch-przed-resetem-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(await snapshotWorld(), null, 1));
-  const cols = ['countries', 'countryPrivate', 'characters', 'charSecrets', 'units', 'unitSecrets', 'intel', 'news', 'gmNotes', 'relations', 'treaties', 'messages', 'history', 'territories', 'images'];
+  const cols = ['countries', 'countryPrivate', 'characters', 'charSecrets', 'units', 'unitSecrets', 'intel', 'news', 'gmNotes', 'relations', 'treaties', 'messages', 'history', 'territories', 'images', 'blocs'];
   if (v.logs) cols.push('logs', 'undo');
   const ok = await run('FACTORY_RESET', Object.entries(v).filter(([, x]) => x === true).map(([k]) => k).join(','), async w => {
     for (const c of cols) (await DB.getAll(c)).forEach(d => w.del(`${c}/${d.id}`));
@@ -476,7 +476,7 @@ export async function conquer(t = {}) {
   await run(t.id ? 'UPDATE_TERRITORY' : 'CONQUEST', `${cName(v.controller)} → ${label}`, w => {
     w.set('territories/' + id, doc);
     const at = v.kind === 'area' ? shapeCenter(shape) : null;
-    if (v.news) w.set('news/' + newId(), { headline: head, body: '', category: 'Conflict', reliability: 'Confirmed', breaking: true, countries: [v.controller, previous].filter(Boolean), gameTime: gameNow(), createdAt: now(), audienceAll: true, audience: [], source: 'gm', place: at ? { name: label, lat: at.lat, lon: at.lon } : null });
+    if (v.news) w.set('news/' + newId(), { headline: head, body: '', category: 'Conflict', reliability: 'Confirmed', breaking: true, special: true, countries: [v.controller, previous].filter(Boolean), gameTime: gameNow(), createdAt: now(), audienceAll: true, audience: [], source: 'gm', place: at ? { name: label, lat: at.lat, lon: at.lon } : null });
     if (v.chron) w.set('history/' + newId(), { turn: turn(), gameTime: gameNow(), text: head.replace(/^⚔️ \S+ /, '') + '.', countries: [v.controller, previous].filter(Boolean), createdAt: now() });
   });
 }

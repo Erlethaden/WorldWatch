@@ -4,7 +4,7 @@ import { ADMIN_UIDS } from './db.js';
 import { S, emit, onChange, startSubscriptions, stopAll, realGM, role, myCountry, persp, gmView, gameNow, turn, unitViews, statusOf, statusChip, tr, posOf, speedKmh, feedItems,
   cFlag, cName, flagOf, countriesSorted, allPlaces, placeLabel, parsePlace, nearestPlace, charName, setToast, run, G, createBackup, cleanupLogs, KINDS } from './store.js';
 import { h, $, $$, esc, toast, modal, form, hooks, confirmBox, kv, searchable } from './ui.js';
-import { initMap, render as renderMap, select, selectedKey, LAYERS, isOn, toggleLayer, pickOnMap, flyTo, colorOf } from './map.js';
+import { initMap, render as renderMap, select, selectedKey, LAYERS, isOn, toggleLayer, pickOnMap, flyTo, colorOf, linesMode, canSeeAllLines, setLinesAll, setLineFocus } from './map.js';
 import * as U from './units.js';
 import { PANELS, openNews } from './panels.js';
 import { autoClean } from './gm.js';
@@ -109,7 +109,7 @@ function startApp() {
   clearInterval(sysTimer); sysTimer = setInterval(systemDuties, 60000); setTimeout(systemDuties, 3000);
   offChange && offChange(); offChange = onChange(refreshAll);
   firstFeed = true;
-  if ('Notification' in window && Notification.permission === 'default') setTimeout(() => toast(h('span', 'Włączyć powiadomienia systemowe? ', h('button.btn.sm', { onclick: () => Notification.requestPermission() }, 'Tak')), 'info', 9000), 4000);
+  if ('Notification' in window && Notification.permission === 'default' && notifPref() !== 'off') setTimeout(() => toast(h('span', 'Powiadomienia na tym urządzeniu? ', h('button.btn.sm', { onclick: enableNotifs }, 'Włącz')), 'info', 12000), 4000);
 }
 
 // zadania GM w tle: auto-backup, sprzątanie logów
@@ -133,6 +133,7 @@ function buildShell() {
   const tabsDef = tabList();
   if (!tabsDef.find(t => t.k === tab)) tab = 'feed';
   app.replaceChildren(
+    h('a.skip', { href: '#panel', onclick: e => { e.preventDefault(); setTab(tab); $('#panel').focus(); } }, 'Przejdź do panelu'),
     h('header#top',
       h('div.brand-sm', { onclick: () => select(null) }, h('span.globe', '🌍'), h('b', 'WORLDWATCH')),
       h('div#clock', { onclick: () => realGM() && clockModal(), title: realGM() ? 'Zegar gry (GM)' : 'Czas gry' }),
@@ -143,18 +144,19 @@ function buildShell() {
         h('button.icon-btn', { onclick: userMenu, title: 'Konto' }, '☰'))),
     h('div#main',
       h('div#map'),
-      h('div#layerbar'),
+      h('div#layerbar', { role: 'toolbar', 'aria-label': 'Warstwy mapy' }),
+      h('div#perspbar', { hidden: true }),
       h('div#unitcard', { hidden: true }),
       h('button#fab.btn.primary', { onclick: quickCreate, hidden: !(realGM() || myCountry()) }, '＋ Wydarzenie'),
-      h('aside#side', h('nav#tabs'), h('div#panel'))),
-    h('nav#mobnav'));
-  initMap($('#map'), { onSelectUnit: renderCard, onCountryClick: cid => { PANELS.country.open?.(cid); setTab('country'); } });
+      h('aside#side', h('nav#tabs', { role: 'tablist', 'aria-label': 'Panele' }), h('div#panel', { tabIndex: -1, role: 'tabpanel' }))),
+    h('nav#mobnav', { 'aria-label': 'Nawigacja' }));
+  initMap($('#map'), { onSelectUnit: k => { if (k && mobileOpen && matchMedia('(max-width: 820px)').matches) { if (history.state?.ww === 'sheet') history.back(); else closeSheet(); } renderCard(k); }, onCountryClick: cid => { PANELS.country.open?.(cid); setTab('country'); refreshAll(); } });
   if (!window._wwListeners) { window._wwListeners = 1; window.addEventListener('ww:tick', onTick); window.addEventListener('ww:news', e => openNews(e.detail)); window.addEventListener('ww:tab', e => setTab(e.detail)); window.addEventListener('ww:refresh', () => { select(null); refreshAll(); }); }
   renderTabs(); refreshAll();
 }
 const tabList = () => [
-  { k: 'feed', i: '📰', l: 'Aktualności' }, { k: 'country', i: '🏛️', l: myCountry() || gmView() ? 'Kraj' : 'Państwa' },
-  ...(myCountry() || realGM() ? [{ k: 'diplo', i: '🤝', l: 'Dyplomacja' }, { k: 'intel', i: '📡', l: 'Wywiad' }] : []),
+  { k: 'feed', i: '📰', l: 'Aktualności', s: 'Wiadom.' }, { k: 'country', i: '🏛️', l: myCountry() || gmView() ? 'Kraj' : 'Państwa' },
+  ...(myCountry() || realGM() ? [{ k: 'diplo', i: '🤝', l: 'Dyplomacja', s: 'Dypl.' }, { k: 'intel', i: '📡', l: 'Wywiad' }] : []),
   { k: 'chron', i: '📜', l: 'Kronika' }, ...(realGM() ? [{ k: 'gm', i: '⚙️', l: 'GM' }] : [])];
 function setTab(k) {
   // telefon: otwarty panel = wpis w historii, więc systemowe „wstecz” wraca do mapy zamiast zamykać aplikację
@@ -162,12 +164,12 @@ function setTab(k) {
   tab = k; localStorage.setItem('ww_tab', k); mobileOpen = true; document.body.classList.add('sheet-open'); renderTabs(); renderPanel(true);
 }
 function closeSheet() { mobileOpen = false; document.body.classList.remove('sheet-open'); renderTabs(); }
-window.addEventListener('popstate', () => { const m = document.querySelector('.modal-wrap:last-of-type .modal-head .icon-btn'); if (m) { m.click(); if (mobileOpen) history.pushState({ ww: 'sheet' }, ''); } else if (mobileOpen) closeSheet(); });
+window.addEventListener('popstate', () => { const w = [...document.querySelectorAll('.modal-wrap')].pop(); if (w) { w._requestClose ? w._requestClose() : w.remove(); if (mobileOpen) history.pushState({ ww: 'sheet' }, ''); } else if (mobileOpen) closeSheet(); });
 function renderTabs() {
   const list = tabList();
-  $('#tabs').replaceChildren(...list.map(t => h('button.tab' + (t.k === tab ? '.on' : ''), { onclick: () => setTab(t.k) }, h('span', t.i), ' ', t.l)));
-  $('#mobnav').replaceChildren(h('button' + (!mobileOpen ? '.on' : ''), { onclick: () => { if (mobileOpen && history.state?.ww === 'sheet') history.back(); else closeSheet(); } }, h('span', '🗺️'), h('small', 'Mapa')),
-    ...list.map(t => h('button' + (mobileOpen && t.k === tab ? '.on' : ''), { onclick: () => setTab(t.k) }, h('span', t.i), h('small', t.l))));
+  $('#tabs').replaceChildren(...list.map(t => h('button.tab' + (t.k === tab ? '.on' : ''), { role: 'tab', 'aria-selected': String(t.k === tab), onclick: () => setTab(t.k) }, h('span', { 'aria-hidden': 'true' }, t.i), ' ', t.l)));
+  $('#mobnav').replaceChildren(h('button' + (!mobileOpen ? '.on' : ''), { onclick: () => { if (mobileOpen && history.state?.ww === 'sheet') history.back(); else closeSheet(); } }, h('span', { 'aria-hidden': 'true' }, '🗺️'), h('small', 'Mapa')),
+    ...list.map(t => h('button' + (mobileOpen && t.k === tab ? '.on' : ''), { 'aria-current': mobileOpen && t.k === tab ? 'page' : null, 'aria-label': t.l, onclick: () => setTab(t.k) }, h('span', { 'aria-hidden': 'true' }, t.i), h('small', t.s || t.l))));
 }
 
 // zachowuje wpisywany tekst przy odświeżaniu panelu
@@ -191,7 +193,14 @@ function refreshAll() {
   const me = $('#me'), C = myCountry();
   me.replaceChildren(...[h('span.role.' + role(), role() === 'admin' ? 'ADMIN' : role() === 'gm' ? 'GM' : role() === 'leader' ? 'PRZYWÓDCA' : 'OBSERWATOR'), C ? h('span.mycountry', `${cFlag(C)} ${cName(C)}`) : null].filter(Boolean));
   $('#fab').hidden = !(realGM() || C);
-  $('#layerbar').replaceChildren(...LAYERS.map(l => h('button.layer' + (isOn(l.k) ? '.on' : ''), { onclick: () => { toggleLayer(l.k); refreshAll(); }, title: l.l }, l.i, h('span', l.l))));
+  $('#layerbar').replaceChildren(...LAYERS.map(l => h('button.layer' + (isOn(l.k) ? '.on' : ''), { 'aria-pressed': String(isOn(l.k)), onclick: () => { toggleLayer(l.k); refreshAll(); }, title: (isOn(l.k) ? 'Ukryj: ' : 'Pokaż: ') + l.l }, l.i, h('span', l.l))));
+  // przełącznik linii: wszystkie (GM / obserwator) albo tylko kliknięte państwo
+  if (['trade', 'alliances', 'conflicts'].some(isOn)) {
+    const lm = linesMode(), all = canSeeAllLines(), who = lm.focus ? `${cFlag(lm.focus)} ${cName(lm.focus)}` : 'kliknij państwo';
+    $('#layerbar').append(h('button.layer.on.lines-mode', { title: all ? 'Przełącz: wszystkie linie / tylko wybrane państwo' : 'Pokazujesz linie jednego państwa — kliknij inne na mapie; tu wracasz do swojego', onclick: () => { all ? setLinesAll(!lm.all) : setLineFocus(null); refreshAll(); } }, '🔗', h('span', lm.all ? 'Linie: wszystkie' : `Linie: ${who}`)));
+  }
+  const pb = $('#perspbar'), pv = realGM() && S.persp && S.persp !== 'gm' ? S.persp : null;
+  if (pb) { pb.hidden = !pv; document.body.classList.toggle('persp-on', !!pv); if (pv) pb.replaceChildren(h('span', '👁 Widzisz świat jako ', h('b', pv === '__obs' ? 'obserwator' : `${cFlag(pv)} ${cName(pv)}`)), h('button.btn.xs', { onclick: () => { S.persp = 'gm'; select(null); refreshAll(); } }, 'Wróć do widoku GM')); }
   const dl = $('#dl-places'); if (dl && (dl.childElementCount < 10 || S._plc !== Object.keys(S.data.countries).length)) { S._plc = Object.keys(S.data.countries).length; dl.replaceChildren(...allPlaces().map(p => h('option', { value: placeLabel(p) }))); }
   renderTabs(); renderMap(); renderPanel(); renderCard(selectedKey()); checkNotifications();
 }
@@ -236,19 +245,30 @@ function renderCard(key) {
   if (!v) { box.hidden = true; return; }
   box.hidden = false;
   const air = v.kind === 'aircraft', r = v.route || [], moving = r.length > 1 && v.duration && !v.hideFuture;
-  const acts = [];
+  // karta: 3 akcje pasujące do stanu obiektu na wierzchu, reszta w „Więcej”, usuwanie osobno
+  const main = [], more = [];
+  let del = null;
   const sec = v.src === 'full' ? v : null;
   if (sec && v.canEdit) {
-    const id = v.id, A = (l, f, cls) => acts.push(h('button.btn.sm' + (cls ? '.' + cls : ''), { onclick: f }, l));
-    A('✏️ Edytuj', () => U.editUnit(U.secOf(id)));
-    if (['aircraft', 'ship', 'submarine', 'ground'].includes(v.kind)) A('🧭 Nowa podróż', () => U.createTrip({ countryId: v.countryId, unitId: id }));
-    if (moving) { A('⏱ Opóźnij', () => U.delayUnit(id)); A('⌛ Czas lotu', () => U.setDuration(id)); A('↪ Zmień cel', () => U.redirectUnit(id)); A('↩ Zawróć', () => U.redirectUnit(id, 'return'));
-      if (air) A('🚨 Awaryjne', () => U.redirectUnit(id, 'emergency'), 'danger'); A(v.holdAt ? '▶ Wznów' : '⏸ Wstrzymaj', () => U.holdUnit(id)); A('⏹ Zakończ teraz', () => U.finishNow(id)); }
-    if (['aircraft', 'ship', 'ground'].includes(v.kind)) A('👥 Manifest', () => U.manifest(id));
-    if (realGM()) A('📡 Wywiad', () => U.distributeIntel(id));
-    A('🗑', () => U.deleteUnit(id), 'danger');
+    const id = v.id, A = (to, l, f, cls) => to.push(h('button.btn.sm' + (cls ? '.' + cls : ''), { onclick: f }, l));
+    const mobile = ['aircraft', 'ship', 'submarine', 'ground'].includes(v.kind), pax = ['aircraft', 'ship', 'ground'].includes(v.kind);
+    if (moving) {
+      A(main, '↪ Zmień cel', () => U.redirectUnit(id)); A(main, '⏱ Opóźnij', () => U.delayUnit(id)); A(main, v.holdAt ? '▶ Wznów' : '⏸ Wstrzymaj', () => U.holdUnit(id));
+      A(more, '⌛ Czas lotu', () => U.setDuration(id)); A(more, '↩ Zawróć', () => U.redirectUnit(id, 'return')); A(more, '⏹ Zakończ teraz', () => U.finishNow(id));
+      if (air) A(more, '🚨 Lądowanie awaryjne', () => U.redirectUnit(id, 'emergency'), 'danger');
+      if (pax) A(more, '👥 Manifest', () => U.manifest(id));
+      A(more, '✏️ Edytuj', () => U.editUnit(U.secOf(id)));
+    } else {
+      if (mobile) A(main, '🧭 Nowa podróż', () => U.createTrip({ countryId: v.countryId, unitId: id }));
+      A(main, '✏️ Edytuj', () => U.editUnit(U.secOf(id)));
+      if (pax) A(main, '👥 Manifest', () => U.manifest(id));
+    }
+    if (moving && mobile) A(more, '🧭 Nowa podróż', () => U.createTrip({ countryId: v.countryId, unitId: id }));
+    if (realGM()) A(realGM() && !moving ? main : more, '📡 Wywiad', () => U.distributeIntel(id));
+    del = h('button.btn.sm.danger.del', { onclick: () => U.deleteUnit(id) }, '🗑 Usuń');
   }
-  if (v.src === 'intel' && realGM()) acts.push(h('button.btn.sm.danger', { onclick: async () => { if (await confirmBox('Usunąć raport wywiadu?', { danger: true })) run('DELETE_INTEL', v.label, w => w.del('intel/' + v.id)); } }, '🗑 Usuń raport'));
+  if (v.src === 'intel' && realGM()) del = h('button.btn.sm.danger.del', { onclick: async () => { if (await confirmBox(`Usunąć raport wywiadu „${v.label}”?`, { danger: true, ok: 'Usuń' })) run('DELETE_INTEL', v.label, w => w.del('intel/' + v.id)); } }, '🗑 Usuń raport');
+  const acts = [...main, more.length ? h('details.more', h('summary.btn.sm', 'Więcej'), h('div.more-list', more)) : null, del].filter(Boolean);
   const pax = sec && sec.passengerIds?.length ? h('div.pax', h('div.k', 'Manifest'), sec.passengerIds.map(id => h('div.pax-row', charName(id)))) : null;
   box.replaceChildren(h('div.card',
     h('div.card-head', { style: { borderColor: colorOf(v) } },
@@ -288,15 +308,21 @@ function updateCardDyn() {
 // ───────── szybkie tworzenie ─────────
 function quickCreate() {
   const gm = realGM();
-  const opts = [['trip', '🧭 Podróż / wizyta dyplomatyczna'], ['aircraft', '✈️ Samolot'], ['ship', '🚢 Okręt / statek'], ['submarine', '🌊 Okręt podwodny'], ['ground', '🪖 Jednostka lądowa'], ['base', '🏗️ Baza / obiekt'], ['zone', '🎯 Ćwiczenia / strefa'], ['satellite', '🛰️ Satelita'],
-    ['statement', '📢 Oświadczenie państwa'], ...(gm ? [['contact', '⚠️ Nieznany kontakt radarowy'], ['news', '🔴 Pilna wiadomość / przeciek'], ['conquest', '⚔️ Podbój terenu'], ['paper', '🗞️ Gazeta'], ['card', '🖼️ Grafika wydarzenia'], ['intel', '📡 Raport wywiadu']] : [['intel', '📝 Notatka wywiadu']])];
-  const m = modal('Utwórz', h('div.create-grid', opts.map(([k, l]) => h('button.btn.create', { onclick: () => { m.close(); doCreate(k); } }, l))));
+  // pogrupowane: najczęstsza akcja gracza (oświadczenie) na górze
+  const MOVE = ['Ruch i siły', [['trip', '🧭 Podróż / wizyta dyplomatyczna'], ['aircraft', '✈️ Samolot'], ['ship', '🚢 Okręt / statek'], ['fleet', '⚓ Flota / zespół okrętów'], ['submarine', '🌊 Okręt podwodny'], ['squadron', '🛩️ Szwadron / eskadra'], ['ground', '🪖 Jednostka lądowa'], ['base', '🏗️ Baza / obiekt'], ['zone', '🎯 Ćwiczenia / strefa'], ['satellite', '🛰️ Satelita']]];
+  const groups = gm
+    ? [['Komunikaty i prasa', [['news', '🔴 Wiadomość / przeciek'], ['paper', '🗞️ Gazeta'], ['card', '🖼️ Grafika wydarzenia'], ['statement', '📢 Oświadczenie państwa']]], MOVE,
+       ['Wywiad', [['intel', '📡 Raport wywiadu'], ['contact', '⚠️ Nieznany kontakt radarowy']]], ['Teren i walki', [['battle', '💥 Bitwa / starcie'], ['conquest', '⚔️ Podbój terenu']]]]
+    : [['Komunikat', [['statement', '📢 Oświadczenie państwa']]], MOVE, ['Wywiad', [['intel', '📝 Notatka wywiadu']]]];
+  const m = modal('Utwórz', h('div.create-groups', groups.map(([title, opts]) => h('section.cg', h('h4', title), h('div.create-grid', opts.map(([k, l]) => h('button.btn.create', { onclick: () => { m.close(); doCreate(k); } }, l)))))));
 }
 async function doCreate(k) {
   if (k === 'trip') { const id = await U.createTrip(); id && setTimeout(() => select('u:' + id, true), 400); return; }
   if (['news', 'statement', 'paper', 'card'].includes(k)) return PANELS.feed.create(k);
   if (k === 'intel') return U.intelReport();
   if (k === 'conquest') return PANELS.gm.conquer();
+  if (k === 'battle') return import('./battle.js').then(B => B.battleForm());
+  if (k === 'fleet' || k === 'squadron') { const id = await U.editUnit(null, k === 'fleet' ? 'ship' : 'aircraft', { group: true, category: 'Military', mission: 'Military' }); if (id) setTimeout(() => select('u:' + id, true), 400); return; }
   const id = await U.editUnit(null, k); if (id) setTimeout(() => select('u:' + id, true), 400);
 }
 
@@ -305,6 +331,7 @@ function userMenu() {
   modal('Konto', h('div.stack',
     kv('Użytkownik', S.me?.displayName || S.user?.name), kv('Rola', { admin: 'Admin', gm: 'Mistrz Gry', leader: 'Przywódca państwa', observer: 'Obserwator' }[role()] || role()), myCountry() ? kv('Państwo', `${cFlag(myCountry())} ${cName(myCountry())}`) : null,
     kv('Dane', isDemo ? 'DEMO (lokalnie w przeglądarce)' : 'Firebase'),
+    notifSettings(),
     realGM() ? h('label.frow', h('span.flabel', 'Perspektywa (zobacz świat oczami gracza)'), (() => { const ps = $('#persp').cloneNode(true); ps.id = ''; ps.value = S.persp || 'gm'; ps.onchange = e => { S.persp = e.target.value; select(null); refreshAll(); }; return ps; })()) : null,
     h('button.btn', { onclick: () => AUTH.out() }, 'Wyloguj')));
 }
@@ -326,11 +353,74 @@ function checkNotifications() {
   fresh.slice(0, 4).forEach(i => {
     const txt = i.type === 'news' ? `${i.news.breaking ? '🔴 PILNE: ' : '📰 '}${i.news.headline}` : `${i.icon} ${i.text}`;
     toast(h('span', { onclick: () => i.unitKey ? select(i.unitKey, true) : i.news ? openNews(i.news.id) : setTab(i.type === 'msg' ? 'diplo' : 'feed') }, txt), i.important || i.news?.breaking ? 'hot' : 'info', 7000);
-    if ((i.important || i.news?.breaking || i.own) && 'Notification' in window && Notification.permission === 'granted' && document.hidden) new Notification('WORLDWATCH', { body: txt.replace(/\p{Extended_Pictographic}/gu, '').trim() });
+
   });
   if (fresh.length > 4) toast(`…i ${fresh.length - 4} więcej w feedzie`, 'info');
+  pushSystem(fresh);
+  const sp = fresh.filter(i => i.type === 'news' && i.news.special).sort((a, b) => (b.news.gameTime || 0) - (a.news.gameTime || 0));
+  if (sp.length && !realGM()) specialEdition(sp[0].news);
   fresh.forEach(i => seen.add(i.id)); if (fresh.length) saveSeen();
   const b = $('#bell .badge'); if (b) { const n = S.unread.size; b.hidden = !n; b.textContent = n > 99 ? '99+' : n; }
+}
+// „Wydanie specjalne”: podbój, nowa tura albo ręcznie oznaczony news przejmuje ekran u odbiorców
+function specialEdition(n) {
+  document.querySelector('.special')?.remove();
+  const back = document.activeElement;
+  const close = () => { ov.classList.add('out'); document.removeEventListener('keydown', key); setTimeout(() => ov.remove(), 250); back?.focus?.(); };
+  const key = e => { if (e.key === 'Escape') close(); };
+  const read = h('button.btn.primary', { onclick: () => { close(); openNews(n.id); } }, 'Czytaj');
+  const ov = h('div.special', { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'sp-h', onmousedown: e => { if (e.target === ov) close(); } },
+    h('article.sp-paper',
+      h('div.sp-mast', h('b', 'Wydanie specjalne'), h('span', G.fmtDT(n.gameTime ?? gameNow()) + ' UTC')),
+      (n.countries || []).length ? h('div.sp-flags', { 'aria-hidden': 'true' }, n.countries.map(cFlag).join(' ')) : null,
+      h('h2#sp-h', (n.headline || '').replace(/^[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\uFE0F\s]+/u, '')),
+      n.body ? h('p.sp-body', n.body) : null,
+      h('div.sp-actions', read, h('button.btn', { onclick: close }, 'Zamknij'))));
+  document.body.append(ov); document.addEventListener('keydown', key);
+  requestAnimationFrame(() => read.focus({ preventScroll: true }));
+}
+// ───────── powiadomienia systemowe (telefon / przeglądarka) ─────────
+// ponytail: działa, gdy aplikacja jest otwarta (także w tle / zminimalizowana). Push przy całkiem zamkniętej aplikacji wymagałby serwera (FCM + Cloud Functions, plan Blaze).
+const notifPref = () => { try { return localStorage.getItem('ww_notif') || 'important'; } catch { return 'important'; } };
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent), standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+let swReg = null;
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  navigator.serviceWorker.register('sw.js').then(r => { swReg = r; }).catch(() => { });
+  navigator.serviceWorker.addEventListener('message', e => { const d = e.data || {}; if (d.ww !== 'open') return; if (d.news) openNews(d.news); else if (d.unit) select(d.unit, true); else if (d.tab) setTab(d.tab); });
+}
+async function enableNotifs() {
+  if (!('Notification' in window)) return toast(isIOS && !standalone ? 'Na iPhonie: Udostępnij → „Dodaj do ekranu początkowego”, potem otwórz WorldWatch z ikony i włącz powiadomienia.' : 'Ta przeglądarka nie obsługuje powiadomień.', 'err', 9000);
+  const r = await Notification.requestPermission();
+  if (r === 'granted') { try { localStorage.setItem('ww_notif', notifPref() === 'off' ? 'important' : notifPref()); } catch { } toast('🔔 Powiadomienia włączone', 'ok'); }
+  else toast('Powiadomienia zablokowane. Zezwól na nie w ustawieniach strony w przeglądarce.', 'err', 8000);
+}
+async function sysNotify(title, body, data = {}, tag) {
+  const opts = { body, tag, data, icon: 'vendor/icon-192.png', badge: 'vendor/icon-192.png', renotify: !!tag, vibrate: [120, 60, 120] };
+  try { const reg = swReg || await navigator.serviceWorker?.getRegistration(); if (reg) return reg.showNotification(title, opts); } catch { }
+  try { const n = new Notification(title, opts); n.onclick = () => { window.focus(); data.news ? openNews(data.news) : data.unit ? select(data.unit, true) : data.tab && setTab(data.tab); n.close(); }; } catch { }
+}
+function pushSystem(fresh) {
+  const pref = notifPref();
+  if (pref === 'off' || !fresh.length || !('Notification' in window) || Notification.permission !== 'granted') return;
+  const pick = fresh.filter(i => pref === 'all' || i.important || i.own || i.type === 'msg' || i.news?.breaking || i.news?.special);
+  if (!pick.length) return;
+  const away = document.hidden || !document.hasFocus();
+  if (!away) { navigator.vibrate?.(pick.some(i => i.news?.breaking || i.news?.special) ? [150, 80, 150] : 60); return; }   // na ekranie wystarczy toast + wibracja
+  const clean = t => String(t).replace(/\p{Extended_Pictographic}|️/gu, '').replace(/\s+/g, ' ').trim();
+  const txt = i => i.type === 'news' ? `${i.news.breaking ? 'PILNE: ' : ''}${clean(i.news.headline)}` : clean(i.text);
+  if (pick.length === 1) { const i = pick[0]; return sysNotify(i.news?.special ? 'WorldWatch · wydanie specjalne' : 'WorldWatch', txt(i), i.news ? { news: i.news.id } : i.unitKey ? { unit: i.unitKey } : { tab: i.type === 'msg' ? 'diplo' : 'feed' }, i.id); }
+  sysNotify(`WorldWatch · ${pick.length} nowe zdarzenia`, pick.slice(0, 4).map(txt).join('\n'), { tab: 'feed' }, 'ww-batch');
+}
+function notifSettings() {
+  const supported = 'Notification' in window, perm = supported ? Notification.permission : 'unsupported';
+  const sel = h('select', { onchange: e => { try { localStorage.setItem('ww_notif', e.target.value); } catch { } } }, [['important', 'Ważne (pilne, moje, wiadomości do mnie)'], ['all', 'Wszystko z aktualności'], ['off', 'Wyłączone']].map(([v, l]) => h('option', { value: v, selected: notifPref() === v }, l)));
+  return h('div.stack',
+    h('label.frow', h('span.flabel', 'Powiadomienia na tym urządzeniu'), sel),
+    perm === 'granted' ? h('div.btn-row', h('small.muted', '✅ Zezwolono'), h('button.btn.sm', { onclick: () => sysNotify('WorldWatch', 'Test: powiadomienia działają.', { tab: 'feed' }, 'ww-test') }, 'Wyślij test'))
+      : perm === 'denied' ? h('small.muted', '⛔ Zablokowane w przeglądarce — zezwól w ustawieniach strony (ikona kłódki przy adresie).')
+      : h('button.btn.sm.primary', { onclick: enableNotifs }, '🔔 Włącz powiadomienia'),
+    isIOS && !standalone ? h('small.muted', 'iPhone: najpierw Udostępnij → „Dodaj do ekranu początkowego” i otwieraj WorldWatch z ikony.') : null,
+    h('small.muted', 'Powiadomienia przychodzą, gdy WorldWatch jest otwarty, także w tle lub na zablokowanym telefonie, dopóki system nie uśpi karty.'));
 }
 function saveSeen() { try { localStorage.setItem(seenKey(), JSON.stringify([...seen].slice(-800))); } catch { } }
 function markAllRead() { S.unread = new Set(); const b = $('#bell .badge'); if (b) b.hidden = true; }

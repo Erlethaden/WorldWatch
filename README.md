@@ -46,8 +46,8 @@ Wystarczy darmowy plan Spark: aplikacja nie używa Cloud Functions ani Storage.
 |---|---|
 | **Admin** (domyślnie właściciel) | wszystko co GM, a do tego: nadaje i odbiera rolę GM/Admin, usuwa graczy, państwa, newsy, wpisy kroniki, traktaty i wiadomości, przegląda i kasuje logi, zarządza backupami, Porządkami i własnymi polami państw |
 | **GM** | prowadzi grę: świat, obiekty, postacie, statystyki, newsy, tury, zegar, przypisuje graczy do państw (bez ról GM/Admin), cofa operacje; może tworzyć backupy, ale nie może ich oglądać ani usuwać |
-| **Country Leader** | swoje państwo |
-| **Observer** | tylko ogląda |
+| **Przywódca państwa** | swoje państwo |
+| **Obserwator** | tylko ogląda |
 
 **Porządki** (System → 🧹, tylko admin), czyli ochrona przed duchami i zapychaniem bazy:
 - konta „oczekuje”, których nikt nie zatwierdził przez N dni,
@@ -58,7 +58,7 @@ Wystarczy darmowy plan Spark: aplikacja nie używa Cloud Functions ani Storage.
 
 Bezpieczne kategorie sprzątają się same raz na dobę, gdy admin jest online (można to wyłączyć). Przed ręcznym sprzątaniem robi się backup. Graczy dodatkowo chroni limit operacji na minutę (ustawiany przez admina), a serwer odrzuca zbyt długie teksty.
 
-**Pola państw** (System → 🧩): admin dodaje własne pola informacji (np. „Rezerwy złota”) do wybranej sekcji, jawne albo niejawne. Wartości wpisuje GM w 📊 Statystykach.
+**Pola państw** (System → 🧩): na starcie nie ma żadnych pól statystyk. Admin dodaje je sam (nazwa, sekcja, jawne/niejawne), a wartości wpisuje GM w 📊 Statystykach. Pola i wartości są w każdym backupie.
 
 **Podbój** (GM → ⚔️ Terytoria albo ＋ Wydarzenie → ⚔️ Podbój terenu): pod kontrolę innego państwa przechodzi całe państwo, część państwa (rysujesz obszar, a aplikacja sama przycina go do granic tego kraju) albo dowolny narysowany obszar. Statusy: okupowane (przerywana granica), zaanektowane (pełny kolor), sporne (czerwona granica). Opcjonalnie powstaje news i wpis w kronice. 🕊️ zwraca teren poprzedniemu właścicielowi. Zająć można też państwa spoza gry (NPC). Istnieją na mapie (po najechaniu widać nazwę), ale nie mają statystyk.
 
@@ -71,12 +71,25 @@ Bezpieczne kategorie sprzątają się same raz na dobę, gdy admin jest online (
 ## 6. Gracze
 
 - Gracz wchodzi na stronę i loguje się (Google albo e-mail + hasło). Trafia do listy **oczekujących**.
-- **GM → Gracze**: wybierasz mu państwo, a rola zmienia się sama na *Country Leader*. Możesz też ustawić *Observer*, *GM* albo *zablokowany*.
+- **GM → Gracze**: wybierasz mu państwo, a rola zmienia się sama na *Przywódca państwa*. Możesz też ustawić *Obserwator*, *GM* albo *zablokowany*.
 - Możesz też założyć konto za gracza (**+ Utwórz konto gracza**) i podać mu e-mail oraz hasło.
 - **✋ przejmij**: GM czasowo zabiera graczowi państwo (gracz widzi świat jako obserwator). **↩ oddaj** przywraca.
 - Selektor u góry (**👁 jako …**) pozwala GM-owi zobaczyć świat dokładnie tak, jak widzi go dany gracz.
 
 ---
+
+## Sojusze i organizacje
+
+Dyplomacja → **🏛 Sojusze i organizacje**. Gracz zakłada sojusz (nazwa, skrót, rodzaj, kolor, statut, jawny albo tajny) i zaprasza państwa. Zaproszony widzi **Przystąp / Odrzuć**, członek może zapraszać dalej i **Opuścić** sojusz. **🗺 Pokaż na mapie** podświetla członków kolorem sojuszu. GM edytuje skład bezpośrednio (także z państwami NPC) i może sojusz rozwiązać. Jawne zmiany trafiają do aktualności. Sojusze są w backupach; po aktualizacji opublikuj ponownie `firestore.rules`.
+
+## Powiadomienia (telefon i przeglądarka)
+
+☰ Konto → **Powiadomienia na tym urządzeniu**: Ważne (pilne, własne, wiadomości do mnie) / Wszystko / Wyłączone, przycisk **Włącz** i **Wyślij test**. Kliknięcie powiadomienia otwiera właściwą wiadomość, obiekt albo kanał.
+
+- Działają, gdy WorldWatch jest otwarty, także w tle, w innej karcie albo przy zablokowanym ekranie, dopóki system nie uśpi strony.
+- **iPhone**: najpierw Udostępnij → „Dodaj do ekranu początkowego” i otwieraj z ikony (iOS 16.4+).
+- Powiadomienia przy całkiem zamkniętej aplikacji wymagałyby serwera (Firebase Cloud Messaging + Cloud Functions, płatny plan Blaze), więc ich nie ma.
+- Wymaga pliku `sw.js` w katalogu głównym strony.
 
 ## Jak działa ukrywanie informacji
 

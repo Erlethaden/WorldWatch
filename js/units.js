@@ -1,17 +1,17 @@
 // Obiekty na mapie: tworzenie, podróże dyplomatyczne, edycja w locie, manifest, rozdział wywiadu
 import { S, G, run, writeUnit, writeChar, newId, now, gameNow, realGM, myCountry, canEdit, countriesSorted, cName, cDem, cFlag, charsOf, charName, charView,
-  KINDS, VIS, MISSIONS, CATEGORIES, STATUS_OVERRIDES, ZONE_TYPES, posOf, speedKmh, nearestPlace, allPlaces, countryAtPlace, projectUnit, unitViews, turn, tr, trOpts } from './store.js';
+  KINDS, VIS, MISSIONS, CATEGORIES, STATUS_OVERRIDES, ZONE_TYPES, posOf, speedKmh, travelRoute, motionOf, nearestPlace, allPlaces, countryAtPlace, projectUnit, unitViews, turn, tr, trOpts } from './store.js';
 import { form, confirmBox, toast, h, modal, esc } from './ui.js';
 
 export const countryOpts = (withGm) => (realGM() ? countriesSorted() : countriesSorted().filter(c => c.id === myCountry())).map(c => [c.id, `${c.flag} ${c.name}`]).concat(withGm && realGM() ? [['__gm', '— brak / nieznany (tylko GM)']] : []);
-const autoDuration = (kind, route) => { const km = G.routeKm(route), sp = KINDS[kind]?.speed || 800; return Math.round((km / sp) * 3600000 + (kind === 'aircraft' ? 20 * 60000 : 0)); };
+const autoDuration = (kind, route) => { const km = G.routeKm(travelRoute({ kind, route })), sp = KINDS[kind]?.speed || 800; return Math.round((km / sp) * 3600000 + (kind === 'aircraft' ? 20 * 60000 : 0)); };
 const capPlace = cid => { const c = S.data.countries[cid]?.capital; return c ? { name: c.name, lat: c.lat, lon: c.lon, cc: S.data.countries[cid].iso2 } : null; };
 const curPlace = sec => { const v = { ...sec }; const p = posOf(v); if (!p) return null; const r = sec.route || []; const at = p.phase === 'after' ? r[r.length - 1] : p.phase === 'before' || p.phase === 'static' ? r[0] : null; return at || { name: nearestPlace(p.pos), lat: +p.pos.lat.toFixed(3), lon: +p.pos.lon.toFixed(3) }; };
 export const secOf = id => S.data.unitSecrets[id];
 
 // ───────── nowy / edycja obiektu ─────────
-export async function editUnit(sec, presetKind) {
-  const isNew = !sec; sec = sec || { id: newId(), kind: presetKind || 'aircraft', countryId: myCountry() || countriesSorted()[0]?.id, visibility: 'public', mission: 'Diplomatic', category: 'Government', missionVisible: true, passengersVisible: false, route: [], depTime: gameNow(), confidence: 50 };
+export async function editUnit(sec, presetKind, preset = {}) {
+  const isNew = !sec; sec = sec || { id: newId(), kind: presetKind || 'aircraft', countryId: myCountry() || countriesSorted()[0]?.id, visibility: 'public', mission: 'Diplomatic', category: 'Government', missionVisible: true, passengersVisible: false, route: [], depTime: gameNow(), confidence: 50, ...preset };
   const r = sec.route || [], moving = r.length > 1;
   const v = await form(isNew ? 'Nowy obiekt na mapie' : `Edycja: ${sec.callsign || ''}`, [
     { k: 'kind', label: 'Rodzaj', type: 'select', value: sec.kind, options: Object.entries(KINDS).map(([k, x]) => [k, x.pl]).filter(([k]) => realGM() || k !== 'contact') },
@@ -20,6 +20,8 @@ export async function editUnit(sec, presetKind) {
     { k: 'type', label: 'Typ', value: sec.type, ph: 'np. Samolot rządowy, Okręt podwodny, Fregata' },
     { k: 'operator', label: 'Operator', value: sec.operator, ph: 'np. Rząd Szwecji' },
     { k: 'category', label: 'Kategoria', type: 'select', value: sec.category, options: trOpts('category', CATEGORIES) },
+    { k: 'group', label: 'Zespół: flota / szwadron / zgrupowanie (wiele jednostek jako jeden obiekt)', type: 'check', value: !!sec.group, show: x => ['ship', 'submarine', 'aircraft', 'ground'].includes(x.kind) },
+    { k: 'composition', label: 'Skład (jedna pozycja na linię)', type: 'textarea', rows: 4, value: sec.composition, ph: '1× niszczyciel HSwMS Stockholm\n2× korweta typu Visby\n1× okręt zaopatrzeniowy', help: 'Liczba na początku linii liczy się do rozmiaru zespołu. Skład widzą inni tylko przy widoczności JAWNE.', show: x => x.group && ['ship', 'submarine', 'aircraft', 'ground'].includes(x.kind) },
     { k: 'guess', label: 'Co widzą inni (np. możliwy okręt podwodny)', value: sec.guess, show: x => x.kind === 'contact' },
     { type: 'section', label: 'Pozycja / trasa' },
     { k: 'from', label: 'Pozycja / start', type: 'place', value: r[0] || capPlace(sec.countryId), req: true },
@@ -109,7 +111,7 @@ export async function createTrip(pre = {}) {
 
 // ───────── szybkie akcje w locie ─────────
 export async function delayUnit(id) {
-  const sec = secOf(id), m = G.motion(sec, gameNow());
+  const sec = secOf(id), m = motionOf(sec, gameNow());
   const v = await form(`Opóźnienie — ${sec.callsign}`, [{ k: 'min', label: 'Opóźnij o', type: 'duration', value: 45 * 60000, req: true }, { k: 'mark', label: 'Ustaw status DELAYED', type: 'check', value: m?.phase === 'before' }]);
   if (!v) return;
   const n = { ...sec, id };
@@ -139,7 +141,7 @@ export async function redirectUnit(id, mode = 'redirect') {
   const here = p.phase === 'moving' || p.phase === 'hold' ? { name: nearestPlace(p.pos), lat: +p.pos.lat.toFixed(3), lon: +p.pos.lon.toFixed(3) } : curPlace(sec);
   const route = [here, { name: dest.name, lat: +dest.lat, lon: +dest.lon, cc: dest.cc || '' }];
   const sp = speedKmh(sec) || KINDS[sec.kind]?.speed || 800;
-  const n = { ...sec, id, route, depTime: t, delay: 0, holdAt: null, duration: Math.max(60000, Math.round(G.routeKm(route) / sp * 3600000)), statusOverride: status };
+  const n = { ...sec, id, route, depTime: t, delay: 0, holdAt: null, duration: Math.max(60000, Math.round(G.routeKm(travelRoute({ kind: sec.kind, route })) / sp * 3600000)), statusOverride: status };
   await run(mode === 'emergency' ? 'EMERGENCY_LANDING' : mode === 'return' ? 'RETURN_UNIT' : 'REDIRECT_UNIT', `${sec.callsign} → ${dest.name}`, w => {
     writeUnit(w, n);
     if (news && ['public', 'limited'].includes(sec.visibility)) w.set('news/' + newId(), { headline: sec.visibility === 'public' ? `${cFlag(sec.countryId)} ${sec.callsign} ogłasza stan awaryjny i zmienia kurs na ${dest.name}` : `${cFlag(sec.countryId)} Samolot rządowy (${cName(sec.countryId)}) ogłasza stan awaryjny`, body: '', category: 'Politics', reliability: 'Confirmed', breaking: true, countries: [sec.countryId], gameTime: t, createdAt: now(), audienceAll: true, audience: [], authorCountry: sec.countryId, source: realGM() ? 'gm' : 'player', place: { name: dest.name, lat: +dest.lat, lon: +dest.lon } });

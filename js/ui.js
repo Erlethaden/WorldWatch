@@ -15,12 +15,30 @@ export function h(tag, attrs, ...kids) {
     if (v == null || v === false) continue;
     if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
     else if (k === 'html') el.innerHTML = v;
-    else if (k === 'style' && typeof v === 'object') Object.assign(el.style, v);
+    else if (k === 'style' && typeof v === 'object') for (const [sk, sv] of Object.entries(v)) sk.startsWith('--') ? el.style.setProperty(sk, sv) : (el.style[sk] = sv);
     else if (k in el && k !== 'list') { try { el[k] = v; } catch { el.setAttribute(k, v); } }
     else el.setAttribute(k, v);
   }
   kids.flat(9).forEach(k => k != null && k !== false && el.append(k instanceof Node ? k : document.createTextNode(k)));
+  // klikalny div/article/span = przycisk dla klawiatury i czytnika ekranu
+  if (attrs?.onclick && !NATIVE.has(el.tagName) && !el.hasAttribute('role')) { el.tabIndex = 0; el.setAttribute('role', 'button'); }
   return el;
+}
+const NATIVE = new Set(['BUTTON', 'A', 'INPUT', 'SELECT', 'TEXTAREA', 'LABEL', 'SUMMARY', 'OPTION']);
+document.addEventListener('keydown', e => {
+  const t = e.target;
+  if ((e.key === 'Enter' || e.key === ' ') && t.getAttribute?.('role') === 'button' && !NATIVE.has(t.tagName)) { e.preventDefault(); t.click(); }
+  if (e.key === 'Escape') { const top = stack[stack.length - 1]; if (top && top.style.display !== 'none') { e.preventDefault(); top._requestClose(); } }
+  if (e.key === 'Tab') { const top = stack[stack.length - 1]; if (top && top.style.display !== 'none') trapTab(e, top); }
+});
+const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex="0"]';
+function trapTab(e, wrap) {
+  const f = [...wrap.querySelectorAll(FOCUSABLE)].filter(x => x.offsetParent !== null);
+  if (!f.length) return;
+  const first = f[0], last = f[f.length - 1];
+  if (!wrap.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+  else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
 }
 
 // ───────── toast ─────────
@@ -32,21 +50,29 @@ export function toast(msg, kind = 'info', ms = 4500) {
 
 // ───────── modal ─────────
 let stack = [];
+let mid = 0;
 export function modal(title, body, { wide = false, actions = [], onClose } = {}) {
-  const close = () => { wrap.remove(); stack = stack.filter(x => x !== wrap); onClose && onClose(); };
-  const wrap = h('div.modal-wrap', { onmousedown: e => { if (e.target === wrap) close(); } },
-    h('div.modal' + (wide ? '.wide' : ''),
-      h('div.modal-head', h('h3', title), h('button.icon-btn', { onclick: close, title: 'Zamknij', 'aria-label': 'Zamknij' }, '✕')),
+  const back = document.activeElement, tid = 'mt' + (++mid);
+  let dirty = false;
+  const close = () => { wrap.remove(); stack = stack.filter(x => x !== wrap); onClose && onClose(); if (back?.isConnected && !stack.length) back.focus?.(); };
+  // kliknięcie obok okna / Esc nie kasuje wpisanych danych bez pytania
+  const requestClose = async () => { if (!dirty || await confirmBox('Zamknąć bez zapisywania? Wpisane dane przepadną.', { ok: 'Zamknij', danger: true, title: 'Niezapisane zmiany' })) close(); };
+  const wrap = h('div.modal-wrap', { onmousedown: e => { if (e.target === wrap) requestClose(); }, oninput: () => { dirty = true; }, onchange: () => { dirty = true; } },
+    h('div.modal' + (wide ? '.wide' : ''), { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': tid },
+      h('div.modal-head', h('h3', { id: tid }, title), h('button.icon-btn', { onclick: close, title: 'Zamknij', 'aria-label': 'Zamknij' }, '✕')),
       h('div.modal-body', body),
       actions.length ? h('div.modal-foot', actions.map(a => h('button.btn' + (a.kind ? '.' + a.kind : ''), { onclick: async () => { if (await a.do?.() !== false) close(); } }, a.label))) : null));
+  wrap._requestClose = requestClose;
   document.body.append(wrap); stack.push(wrap);
+  const first = wrap.querySelector('.modal-body input:not([type=hidden]):not([type=file]):not([type=checkbox]), .modal-body textarea, .modal-body select') || wrap.querySelector('.modal-foot .btn.primary, .modal-foot .btn, .modal-body button') || wrap.querySelector('.modal-head button');
+  requestAnimationFrame(() => first?.focus({ preventScroll: true }));
   return { close, el: wrap };
 }
 export function hideModals(on) { stack.forEach(m => m.style.display = on ? 'none' : ''); }
-export function confirmBox(msg, { ok = 'Potwierdź', danger = false } = {}) {
+export function confirmBox(msg, { ok = 'Potwierdź', danger = false, title = danger ? 'Na pewno?' : 'Potwierdzenie' } = {}) {
   return new Promise(res => {
     let done = false;
-    modal('Potwierdzenie', h('p', msg), { actions: [{ label: 'Anuluj', do: () => { done = true; res(false); } }, { label: ok, kind: danger ? 'danger' : 'primary', do: () => { done = true; res(true); } }], onClose: () => !done && res(false) });
+    modal(title, h('p', msg), { actions: [{ label: 'Anuluj', do: () => { done = true; res(false); } }, { label: ok, kind: danger ? 'danger' : 'primary', do: () => { done = true; res(true); } }], onClose: () => !done && res(false) });
   });
 }
 
