@@ -313,7 +313,7 @@ function quickCreate() {
   const groups = gm
     ? [['Komunikaty i prasa', [['news', '🔴 Wiadomość / przeciek'], ['paper', '🗞️ Gazeta'], ['card', '🖼️ Grafika wydarzenia'], ['statement', '📢 Oświadczenie państwa']]], MOVE,
        ['Wywiad', [['intel', '📡 Raport wywiadu'], ['contact', '⚠️ Nieznany kontakt radarowy']]], ['Teren i walki', [['battle', '💥 Bitwa / starcie'], ['conquest', '⚔️ Podbój terenu']]]]
-    : [['Komunikat', [['statement', '📢 Oświadczenie państwa']]], MOVE, ['Wywiad', [['intel', '📝 Notatka wywiadu']]]];
+    : [['Komunikat i prasa', [['statement', '📢 Oświadczenie państwa'], ['paper', '🗞️ Gazeta'], ['card', '🖼️ Grafika wydarzenia']]], MOVE, ['Wywiad', [['intel', '📝 Notatka wywiadu']]]];
   const m = modal('Utwórz', h('div.create-groups', groups.map(([title, opts]) => h('section.cg', h('h4', title), h('div.create-grid', opts.map(([k, l]) => h('button.btn.create', { onclick: () => { m.close(); doCreate(k); } }, l)))))));
 }
 async function doCreate(k) {

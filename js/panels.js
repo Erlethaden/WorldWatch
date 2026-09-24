@@ -28,7 +28,7 @@ const feed = {
     const unread = S.unread?.size || 0;
     return h('div.feed',
       h('div.feed-head', h('div', h('h2', 'Aktualności'), unread ? h('div.new', `${unread} ${unread === 1 ? 'nowe zdarzenie' : unread < 5 ? 'nowe zdarzenia' : 'nowych zdarzeń'}`) : null),
-        h('div.btn-row', realGM() ? [h('button.btn.sm.primary', { onclick: () => feed.create('news') }, '🔴 Wiadomość'), h('button.btn.sm', { onclick: () => feed.create('paper') }, '🗞️'), h('button.btn.sm', { onclick: () => feed.create('card') }, '🖼️')] : myCountry() ? h('button.btn.sm', { onclick: () => feed.create('statement') }, '📢 Oświadczenie') : null)),
+        h('div.btn-row', realGM() ? [h('button.btn.sm.primary', { onclick: () => feed.create('news') }, '🔴 Wiadomość'), h('button.btn.sm', { onclick: () => feed.create('paper') }, '🗞️'), h('button.btn.sm', { onclick: () => feed.create('card') }, '🖼️')] : myCountry() ? [h('button.btn.sm', { onclick: () => feed.create('statement') }, '📢 Oświadczenie'), h('button.btn.sm', { title: 'Gazeta', 'aria-label': 'Gazeta', onclick: () => feed.create('paper') }, '🗞️'), h('button.btn.sm', { title: 'Grafika wydarzenia', 'aria-label': 'Grafika wydarzenia', onclick: () => feed.create('card') }, '🖼️')] : null)),
       h('div.filters', [['all', 'Wszystko'], ['news', 'Wiadomości'], ['move', 'Ruchy'], ['intel', 'Wywiad / prywatne']].map(([k, l]) => h('button.chip' + (feedFilter === k ? '.on' : ''), { onclick: () => { feedFilter = k; goTab('feed'); } }, l))),
       items.length ? items.map(feedItem) : h('div.empty', 'Cisza w eterze. Jeszcze nic się nie wydarzyło.'));
   },
@@ -45,7 +45,7 @@ function feedItem(i) {
     const n = i.news, leak = ['Unverified', 'Rumor', 'False information'].includes(n.reliability);
     return h('article.news' + (n.breaking ? '.breaking' : '') + (unread ? '.unread' : '') + (i.future ? '.future' : ''), { onclick: () => openNews(n.id) },
       h('div.news-top', n.breaking ? h('span.brk', '🔴 PILNE') : leak ? h('span.leak', n.leak ? '🔴 NIEPOTWIERDZONY PRZECIEK' : '⚠ NIEPOTWIERDZONE') : h('span.cat', tr('news', n.category) || 'Wiadomość'),
-        n.official ? chip('OFICJALNE OŚWIADCZENIE', 'off') : null, i.future ? chip('⏳ zaplanowane ' + G.fmtDT(n.gameTime), 'warn') : null, !n.audienceAll ? chip('🔒 ' + (n.audience || []).map(cFlag).join(''), 'priv') : null,
+        n.official ? chip('OFICJALNE OŚWIADCZENIE', 'off') : null, n.press ? chip(`🗞️ prasa: ${cFlag(n.authorCountry)} ${cName(n.authorCountry)}`) : null, i.future ? chip('⏳ zaplanowane ' + G.fmtDT(n.gameTime), 'warn') : null, !n.audienceAll ? chip('🔒 ' + (n.audience || []).map(cFlag).join(''), 'priv') : null,
         h('time', G.fmtDT(n.gameTime))),
       h('h4', withFlags(n)),
       n.body ? h('p', n.body.length > 220 ? n.body.slice(0, 220) + '…' : n.body) : null,
@@ -100,7 +100,7 @@ export function openNews(id) {
     n.paper ? h('div.paper-wrap', P.renderPaper(n.paper)) : null,
     n.card ? h('div.paper-wrap', P.renderCard(n.card)) : null,
     !n.paper ? [h('h2', withFlags(n)), h('div.muted', `${G.fmtDT(n.gameTime)} UTC · ${tr('news', n.category)}`), n.imageUrl ? img(n.imageUrl, '.news-img') : null, battleBlock(n), n.body ? h('p', n.body) : null] : null,
-    h('div.news-foot', n.reliability ? h('span.relia.' + (relClass[n.reliability] || ''), `Wiarygodność: ${tr('reliability', n.reliability)}${n.reliabilityPct != null ? ' · ' + n.reliabilityPct + '%' : ''}`) : null, n.official ? chip('OFICJALNE OŚWIADCZENIE — ' + cName(n.authorCountry), 'off') : null),
+    h('div.news-foot', n.reliability ? h('span.relia.' + (relClass[n.reliability] || ''), `Wiarygodność: ${tr('reliability', n.reliability)}${n.reliabilityPct != null ? ' · ' + n.reliabilityPct + '%' : ''}`) : null, n.official ? chip('OFICJALNE OŚWIADCZENIE — ' + cName(n.authorCountry), 'off') : null, n.press ? chip(`🗞️ prasa: ${cFlag(n.authorCountry)} ${cName(n.authorCountry)} (publikacja gracza)`) : null),
     gm ? h('div.gm-box', h('b', 'GM: '), `prawda: ${truth === 'false' ? '❌ fałsz' : truth === 'partial' ? '◐ częściowo' : '✅ prawda'} · widzą: ${n.audienceAll ? 'wszyscy' : (n.audience || []).map(cName).join(', ')}`) : null,
     h('div.btn-row.wrap',
       n.place ? h('button.btn.sm', { onclick: () => { m.close(); import('./map.js').then(M => M.flyTo(n.place.lat, n.place.lon, 6)); } }, '📍 Na mapie') : null,
@@ -115,15 +115,60 @@ export function openNews(id) {
 // ═════════════════════════ KRAJ ═════════════════════════
 let openCountry = null;
 const countryPanel = {
-  open(cid) { openCountry = cid; },
+  open(cid) { openCountry = cid; countryMode = 'list'; },
   render() {
+    const modes = h('div.filters', [['list', '🏛️ Państwa'], ['rank', '🏆 Ranking']].map(([k, l]) => h('button.chip' + (countryMode === k ? '.on' : ''), { onclick: () => { countryMode = k; goTab('country'); } }, l)));
+    if (countryMode === 'rank') return h('div', modes, leaderboard());
     const C = openCountry || ctxCountry();
     const list = countriesSorted();
     const picker = h('div.country-picker', h('select', { onchange: e => { openCountry = e.target.value || null; goTab('country'); } }, h('option', { value: '' }, ctxCountry() ? `${cFlag(ctxCountry())} Moje państwo` : '— wybierz państwo —'), list.map(c => h('option', { value: c.id, selected: c.id === openCountry }, `${c.flag} ${c.name}`))));
-    if (!C) return h('div', picker, h('div.country-grid', list.map(c => h('button.ccard', { style: { '--c': c.color }, onclick: () => { openCountry = c.id; goTab('country'); } }, h('span.flag', c.flag), h('b', c.name), h('small', userOfCountry(c.id).map(u => u.displayName).join(', ') || 'NPC')))));
-    return h('div', picker, dashboard(C));
+    if (!C) return h('div', modes, picker, h('div.country-grid', list.map(c => h('button.ccard', { style: { '--c': c.color }, onclick: () => { openCountry = c.id; goTab('country'); } }, h('span.flag', c.flag), h('b', c.name), h('small', userOfCountry(c.id).map(u => u.displayName).join(', ') || 'NPC')))));
+    return h('div', modes, picker, dashboard(C));
   }
 };
+
+// ───────── RANKING: porównanie państw w polach statystyk ─────────
+let countryMode = 'list', rankKey = null, rankAsc = false;
+// „10,6 mln”, „55 000”, „82%”, „1,9 bln $” → liczba do sortowania
+export function statNum(v) {
+  if (v == null || v === '') return null;
+  const s = String(v).toLowerCase().replace(/\s|\u00a0/g, '').replace(',', '.');
+  const m = s.match(/-?\d+(\.\d+)?/); if (!m) return null;
+  let n = parseFloat(m[0]);
+  if (/bln|tr|bilion/.test(s)) n *= 1e12; else if (/mld|bn|miliard/.test(s)) n *= 1e9; else if (/mln|mio|milion|m$/.test(s)) n *= 1e6; else if (/tys|k$/.test(s)) n *= 1e3;
+  return n;
+}
+function statVal(c, f) {
+  if (f.public) return c.custom?.[f.key];
+  const priv = S.data.countryPrivate[c.id];   // niejawne: GM widzi wszystkie, gracz tylko swoje
+  return priv ? priv.custom?.[f.key] : undefined;
+}
+function leaderboard() {
+  const gm = realGM(), me = myCountry(), fields = customFields().filter(f => gm || f.public || me);
+  const list = countriesSorted();
+  if (!fields.length) return h('div.empty', 'Brak pól statystyk do porównania. Admin dodaje je w GM → System → 🧩 Pola państw.');
+  const f = fields.find(x => x.key === rankKey) || fields[0]; rankKey = f.key;
+  const rows = list.map(c => { const raw = statVal(c, f), n = statNum(raw); return { c, raw, n, hidden: raw === undefined && !f.public }; });
+  const known = rows.filter(r => r.n != null).sort((a, b) => rankAsc ? a.n - b.n : b.n - a.n), rest = rows.filter(r => r.n == null);
+  const max = Math.max(...known.map(r => Math.abs(r.n)), 0) || 1;
+  const row = (r, i) => h('div.rk-row' + (r.c.id === me ? '.me' : ''), { style: { '--c': r.c.color || '#3fa7ff' } },
+    h('span.rk-pos', r.n != null ? String(i + 1) : '–'), h('span.rk-name', `${r.c.flag} ${r.c.name}`),
+    h('span.rk-bar', r.n != null ? h('i', { style: { width: Math.max(2, Math.abs(r.n) / max * 100) + '%' } }) : null),
+    h('b.rk-val', r.hidden ? '🔒' : r.raw ?? '—'));
+  // tabela wszystkich pól (przewijana w poziomie)
+  const cols = fields, cell = (c, x) => { const v = statVal(c, x); return v === undefined && !x.public ? '🔒' : v ?? '—'; };
+  return h('div.rank',
+    h('div.rk-controls',
+      h('select', { 'aria-label': 'Statystyka', onchange: e => { rankKey = e.target.value; goTab('country'); } }, fields.map(x => h('option', { value: x.key, selected: x.key === f.key }, `${x.label}${x.public ? '' : ' 🔒'}`))),
+      h('button.btn.sm', { title: 'Odwróć kolejność', onclick: () => { rankAsc = !rankAsc; goTab('country'); } }, rankAsc ? '↑ rosnąco' : '↓ malejąco')),
+    !gm && !f.public ? h('p.help', 'Pole niejawne: widzisz tylko wartość swojego państwa.') : null,
+    h('div.rk-list', known.map(row), rest.map(r => row(r, 0))),
+    h('h3', 'Porównanie wszystkich pól'),
+    h('div.table-wrap', h('table.tbl.rk-table',
+      h('thead', h('tr', h('th', 'Państwo'), cols.map(x => h('th', { role: 'button', tabIndex: 0, onclick: () => { rankKey = x.key; goTab('country'); }, title: 'Pokaż ranking' }, x.label + (x.public ? '' : ' 🔒'))))),
+      h('tbody', list.map(c => h('tr' + (c.id === me ? '.me' : ''), h('td', `${c.flag} ${c.name}`), cols.map(x => h('td' + (x.key === f.key ? '.on' : ''), cell(c, x)))))))),
+    h('p.help', gm ? 'Widok GM: widzisz wszystkie pola, także niejawne.' : 'Pola z 🔒 są niejawne: znasz tylko własne wartości. Ranking liczy się z liczb w polach (np. „10,6 mln”, „82%”).'));
+}
 function dashboard(cid) {
   const c = country(cid); if (!c) return h('div.empty', 'Brak państwa');
   const priv = S.data.countryPrivate[cid], mine = canEdit(cid), gm = realGM();

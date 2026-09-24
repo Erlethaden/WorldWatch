@@ -1,5 +1,5 @@
 // Generator gazet (sekcja 39) i grafik wydarzeń (sekcja 40) — render HTML → PNG (html2canvas)
-import { S, run, now, newId, gameNow, turn, realGM, cFlag, cName, cDem, country, countriesSorted, NEWS_CATS, G, tr, trOpts } from './store.js';
+import { S, run, now, newId, gameNow, turn, realGM, cFlag, cName, cDem, country, countriesSorted, NEWS_CATS, G, tr, trOpts, myCountry } from './store.js';
 import { h, modal, toast, esc, img, hooks } from './ui.js';
 
 export const PAPER_STYLES = {
@@ -78,7 +78,7 @@ function editor(title, fields, cfg, renderFn, onPublish, fileName) {
   modal(title, h('div.editor', h('div.ed-form', rows, realGM() ? h('label.frow', h('span.flabel', 'Publikacja — odbiorcy (inna narracja dla każdego państwa)'), aud) : null), h('div.ed-prev', preview)), {
     wide: true, actions: [
       { label: '⬇ Pobierz PNG', do: () => { toPng(preview.firstChild, fileName()); return false; } },
-      ...(realGM() ? [{ label: '📰 Publikuj w feedzie', kind: 'primary', do: () => onPublish(cfg, aud.value) }] : [])
+      ...(realGM() || myCountry() ? [{ label: '📰 Publikuj w feedzie', kind: 'primary', do: () => onPublish(cfg, aud.value) }] : [])
     ]
   });
   upd();
@@ -86,12 +86,14 @@ function editor(title, fields, cfg, renderFn, onPublish, fileName) {
 
 export function newspaper(pre = {}) {
   const n = pre.newsId ? S.data.news[pre.newsId] : null;
-  const c0 = n?.countries?.[0] || n?.authorCountry || countriesSorted()[0]?.id;
+  const c0 = realGM() ? n?.countries?.[0] || n?.authorCountry || countriesSorted()[0]?.id : myCountry();
   const cfg = { style: 'modern', country: c0, outlet: PAPER_STYLES.modern.outlet(c0), headline: (n?.headline || '').replace(/^[\u{1F1E6}-\u{1F1FF}\s]+/u, '').toUpperCase(), subheadline: '', body: n?.body || '', category: n?.category || 'Politics', city: cap(c0), date: n?.gameTime ?? gameNow(), issue: 1000 + turn() * 7, price: '4,50 zł', flags: n?.countries || [c0].filter(Boolean), imageUrl: n?.imageUrl || '', caption: '', editorial: '', ...(pre.cfg || {}) };
   const cOpts = countriesSorted().map(c => [c.id, `${c.flag} ${c.name}`]);
+  // gracz wydaje prasę tylko swojego państwa (flagi może dać dowolne)
+  const own = realGM() ? cOpts : cOpts.filter(([id]) => id === myCountry());
   const fields = [
     { k: 'style', label: 'Styl', type: 'select', options: Object.entries(PAPER_STYLES).map(([k, s]) => [k, s.pl]) },
-    { k: 'country', label: 'Gazeta z kraju (narracja)', type: 'select', options: cOpts },
+    { k: 'country', label: 'Gazeta z kraju (narracja)', type: 'select', options: own },
     { k: 'outlet', label: 'Nazwa gazety' }, { k: 'headline', label: 'Nagłówek' }, { k: 'subheadline', label: 'Podtytuł' },
     { k: 'body', label: 'Treść artykułu', type: 'textarea', rows: 5 }, { k: 'city', label: 'Miejsce (dateline)' },
     { k: 'category', label: 'Kategoria', type: 'select', options: trOpts('news', NEWS_CATS) }, { k: 'issue', label: 'Numer wydania', type: 'number' }, { k: 'price', label: 'Cena' },
@@ -119,9 +121,11 @@ export function eventCard(pre = {}) {
 }
 
 async function publish(doc, audience, attachTo) {
-  if (attachTo && S.data.news[attachTo] && confirm('Dołączyć do istniejącej wiadomości zamiast tworzyć nową?')) {
+  if (attachTo && realGM() && S.data.news[attachTo] && confirm('Dołączyć do istniejącej wiadomości zamiast tworzyć nową?')) {
     return run('ATTACH_MEDIA', doc.headline, w => w.merge('news/' + attachTo, doc.paper ? { paper: doc.paper } : { card: doc.card }));
   }
-  const ok = await run('PUBLISH_MEDIA', doc.headline, w => w.set('news/' + newId(), { body: '', reliability: 'Confirmed', breaking: false, gameTime: gameNow(), createdAt: now(), audienceAll: !audience, audience: audience ? [audience] : [], source: 'gm', ...doc }));
+  // gracz publikuje jako prasa swojego państwa (reguły: authorCountry = jego kraj, source = player)
+  const who = realGM() ? { source: 'gm', audienceAll: !audience, audience: audience ? [audience] : [] } : { source: 'player', authorCountry: myCountry(), press: true, reliability: null, audienceAll: true, audience: [], countries: [...new Set([myCountry(), ...(doc.countries || [])])] };
+  const ok = await run('PUBLISH_MEDIA', doc.headline, w => w.set('news/' + newId(), { body: '', reliability: 'Confirmed', breaking: false, gameTime: gameNow(), createdAt: now(), ...doc, ...who }));
   if (ok) toast('📰 Opublikowano', 'ok');
 }
