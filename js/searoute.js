@@ -114,13 +114,30 @@ function visible(a, b) {
 }
 function pull(path) {
   const out = [path[0]]; let a = 0;
-  while (a < path.length - 1) { let b = Math.min(path.length - 1, a + 400); while (b > a + 1 && !visible(path[a], path[b])) b--; out.push(path[b]); a = b; }
+  while (a < path.length - 1) { let b = Math.min(path.length - 1, a + 120); while (b > a + 1 && !visible(path[a], path[b])) b--; out.push(path[b]); a = b; }
   return out;
 }
 // wygładzenie Chaikina: łagodne łuki zamiast ostrych załamań
-function chaikin(pts, n = 2, k = .15) {   // małe k = łagodne ścięcie narożników, żeby łuki nie wchodziły na ląd
-  for (let r = 0; r < n; r++) { const o = [pts[0]]; for (let i = 0; i < pts.length - 1; i++) { const [a, b] = [pts[i], pts[i + 1]]; o.push([a[0] * (1 - k) + b[0] * k, a[1] * (1 - k) + b[1] * k], [a[0] * k + b[0] * (1 - k), a[1] * k + b[1] * (1 - k)]); } o.push(pts[pts.length - 1]); pts = o; }
+// wygładzenie: narożnik ścinany najwyżej o ~0,3° i tylko wtedy, gdy ścięty punkt dalej leży na morzu
+const wet = (lat, lon) => !!ocean[idx(...toXY(lat, lon))];
+function smooth(pts, n = 2) {
+  for (let r = 0; r < n; r++) {
+    const o = [pts[0]];
+    for (let i = 1; i < pts.length - 1; i++) {
+      const [p, c, q] = [pts[i - 1], pts[i], pts[i + 1]];
+      const cut = (a, len) => { const d = Math.min(0.3, len * 0.2) / (len || 1); return [c[0] + (a[0] - c[0]) * d, c[1] + (a[1] - c[1]) * d]; };
+      const A = cut(p, Math.hypot(p[0] - c[0], p[1] - c[1])), B = cut(q, Math.hypot(q[0] - c[0], q[1] - c[1]));
+      if (wet(...A) && wet(...B) && wet((A[0] + B[0]) / 2, (A[1] + B[1]) / 2)) o.push(A, B); else o.push(c);
+    }
+    o.push(pts[pts.length - 1]); pts = o;
+  }
   return pts;
+}
+// zagęszczenie co ≤0,5°: mapa (Mercator) rysuje wtedy dokładnie ten odcinek, który sprawdziliśmy na siatce
+function densify(pts) {
+  const o = [pts[0]];
+  for (let i = 1; i < pts.length; i++) { const [a, b] = [pts[i - 1], pts[i]], k = Math.ceil(Math.max(Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1])) / 0.5); for (let j = 1; j <= k; j++) o.push([a[0] + (b[0] - a[0]) * j / k, a[1] + (b[1] - a[1]) * j / k]); }
+  return o;
 }
 
 // trasa morska między dwoma punktami na lądzie: { sea: [[lat,lon]…], from: port A, to: port B } albo null
@@ -135,7 +152,7 @@ export function seaRoute(A, B) {
     if (p) {
       const ll = pull(p).map(i => { const x = i % W; return toLL(x, (i - x) / W); });
       for (let i = 1; i < ll.length; i++) { const d = ll[i][1] - ll[i - 1][1]; if (d > 180) ll[i][1] -= 360 * Math.round(d / 360); else if (d < -180) ll[i][1] += 360 * Math.round(-d / 360); }   // ciągłość przez 180°
-      res = { sea: chaikin(ll), from: ll[0], to: ll[ll.length - 1] };
+      res = { sea: densify(smooth(ll)), from: ll[0], to: ll[ll.length - 1] };
     }
   }
   cache.set(key, res); return res;
