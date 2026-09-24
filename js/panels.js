@@ -153,7 +153,7 @@ function leaderboard() {
   const max = Math.max(...known.map(r => Math.abs(r.n)), 0) || 1;
   const row = (r, i) => h('div.rk-row' + (r.c.id === me ? '.me' : ''), { style: { '--c': r.c.color || '#3fa7ff' } },
     h('span.rk-pos', r.n != null ? String(i + 1) : '–'), h('span.rk-name', `${r.c.flag} ${r.c.name}`),
-    h('span.rk-bar', r.n != null ? h('i', { style: { width: Math.max(2, Math.abs(r.n) / max * 100) + '%' } }) : null),
+    h('span.rk-bar', r.n != null ? h('i', { style: { width: Math.max(2, Math.abs(r.n) / max * 100) + '%', background: r.c.color || '#3fa7ff' } }) : null),
     h('b.rk-val', r.hidden ? '🔒' : r.raw ?? '—'));
   // tabela wszystkich pól (przewijana w poziomie)
   const cols = fields, cell = (c, x) => { const v = statVal(c, x); return v === undefined && !x.public ? '🔒' : v ?? '—'; };

@@ -584,3 +584,19 @@ body.persp-on #map { box-shadow: inset 0 0 0 2px #3fd0ff66; }
 .bt-side small, .bt-units small { color: var(--muted); }
 .bt-loss { display: flex; flex-direction: column; font-size: 13px; }
 @media (max-width: 520px) { .bt-sides { grid-template-columns: 1fr; } }
+
+/* ranking państw */
+.rank { display: flex; flex-direction: column; gap: 10px; }
+.rk-controls { display: flex; gap: 6px; } .rk-controls select { flex: 1; min-width: 0; }
+.rk-list { display: flex; flex-direction: column; gap: 3px; }
+.rk-row { display: grid; grid-template-columns: 26px minmax(90px, 1.2fr) 1fr auto; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; background: var(--panel2); font-size: 13px; }
+.rk-row.me { box-shadow: inset 0 0 0 1px var(--acc); }
+.rk-pos { font: 700 13px var(--mono); color: var(--muted); text-align: right; }
+.rk-row:nth-child(1) .rk-pos { color: var(--acc); }
+.rk-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rk-bar { display: block; height: 8px; min-width: 40px; }
+.rk-bar i { display: block; height: 100%; border-radius: 4px; background: var(--c); opacity: .85; }
+.rk-val { font-family: var(--mono); font-size: 12.5px; text-align: right; white-space: nowrap; }
+.rk-table th[role=button] { cursor: pointer; white-space: nowrap; }
+.rk-table td.on { color: var(--acc); font-weight: 600; }
+.rk-table tr.me td:first-child { color: var(--acc); }
