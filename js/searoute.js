@@ -1,10 +1,10 @@
-// Morskie szlaki: trasa po wodzie (A* na siatce 0,5°) zamiast prostej linii między stolicami.
+// Morskie szlaki: trasa po wodzie (A* na siatce 0,25°) zamiast prostej linii między stolicami.
 // Maska lądu rysowana raz z konturów państw; kanały i wąskie cieśniny są „przekopane” ręcznie.
-const RES = 2, W = 360 * RES, H = 180 * RES;           // siatka 0,5° (720 × 360): trasa światowa w ułamku sekundy
-let land = null, ocean = null, coast = null;
-const cache = new Map(), portCache = new Map();
+const RES = 4, W = 360 * RES, H = 180 * RES;           // siatka 0,25° (1440 × 720): widać wyspy duńskie i cieśniny
+let land = null, ocean = null, coast = null, owner = null;
+const cache = new Map(), portCache = new Map(), pathCache = new Map();
 
-// kanały i cieśniny zbyt wąskie dla siatki: [lon, lat] od → do
+// cieśniny zbyt wąskie dla siatki: [lon, lat] od → do (bez Kanału Kilońskiego — duże okręty opływają Danię)
 const PASSAGES = [
   [[32.35, 31.30], [32.55, 29.90]],   // Kanał Sueski
   [[32.55, 29.90], [33.90, 27.60]],   // Zatoka Sueska
@@ -13,8 +13,7 @@ const PASSAGES = [
   [[29.10, 41.25], [28.95, 40.95]],   // Bosfor
   [[26.15, 40.00], [26.75, 40.45]],   // Dardanele
   [[12.60, 56.15], [12.75, 55.45]],   // Sund
-  [[10.85, 55.80], [11.05, 55.20]],   // Wielki Bełt
-  [[9.15, 53.90], [10.15, 54.40]],    // Kanał Kiloński
+  [[10.95, 55.95], [11.05, 55.05]],   // Wielki Bełt
   [[36.55, 45.45], [36.65, 45.25]],   // Cieśnina Kerczeńska
   [[103.40, 1.35], [104.30, 1.20]],   // Singapur
   [[15.60, 38.30], [15.65, 38.05]]    // Mesyna
@@ -23,61 +22,81 @@ const PASSAGES = [
 const idx = (x, y) => y * W + ((x % W) + W) % W;
 const toXY = (lat, lon) => [Math.floor((((lon + 180) % 360 + 360) % 360) * RES), Math.min(H - 1, Math.max(0, Math.floor((90 - lat) * RES)))];
 const toLL = (x, y) => [90 - (y + 0.5) / RES, (x + 0.5) / RES - 180];
+const N4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
 export const ready = () => !!ocean;
 
 export function init(fc) {
-  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
-  const g = cv.getContext('2d', { willReadFrequently: true });
+  const mk = () => { const cv = document.createElement('canvas'); cv.width = W; cv.height = H; return cv.getContext('2d', { willReadFrequently: true }); };
+  const g = mk(), go = mk();
+  const ring = (c, r, off) => r.forEach(([lon, lat], i) => { const x = (lon + 180 + off) * RES, y = (90 - lat) * RES; i ? c.lineTo(x, y) : c.moveTo(x, y); });
   g.fillStyle = '#000';
-  const ring = (r, off) => r.forEach(([lon, lat], i) => { const x = (lon + 180 + off) * RES, y = (90 - lat) * RES; i ? g.lineTo(x, y) : g.moveTo(x, y); });
-  for (const f of fc.features) {
-    const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates;
-    for (const off of [-360, 0, 360]) { g.beginPath(); polys.forEach(p => p.forEach(r => ring(r, off))); g.fill('evenodd'); }
-  }
-  g.globalCompositeOperation = 'destination-out'; g.lineWidth = 1.6; g.lineCap = 'round';
+  fc.features.forEach((f, fi) => {
+    const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates, id = fi + 1;
+    go.fillStyle = `rgb(${id >> 8},${id & 255},77)`;   // mapa „czyj to ląd” — port wybieramy na wybrzeżu właściwego państwa
+    for (const off of [-360, 0, 360]) for (const c of [g, go]) { c.beginPath(); polys.forEach(p => p.forEach(r => ring(c, r, off))); c.fill('evenodd'); }
+  });
+  g.globalCompositeOperation = 'destination-out'; g.lineWidth = 2; g.lineCap = 'round';
   PASSAGES.forEach(([a, b]) => { g.beginPath(); g.moveTo((a[0] + 180) * RES, (90 - a[1]) * RES); g.lineTo((b[0] + 180) * RES, (90 - b[1]) * RES); g.stroke(); });
-  const px = g.getImageData(0, 0, W, H).data;
-  land = new Uint8Array(W * H); for (let i = 0; i < W * H; i++) land[i] = px[i * 4 + 3] > 140 ? 1 : 0;
+  const px = g.getImageData(0, 0, W, H).data, po = go.getImageData(0, 0, W, H).data;
+  land = new Uint8Array(W * H); owner = new Uint16Array(W * H);
+  for (let i = 0; i < W * H; i++) { land[i] = px[i * 4 + 3] > 140 ? 1 : 0; if (po[i * 4 + 3] > 200) owner[i] = (po[i * 4] << 8) | po[i * 4 + 1]; }
   coast = new Uint8Array(W * H);
   for (let y = 1; y < H - 1; y++) for (let x = 0; x < W; x++) { const i = y * W + x; if (land[i]) continue; for (let dy = -1; dy <= 1 && !coast[i]; dy++) for (let dx = -1; dx <= 1; dx++) if (land[idx(x + dx, y + dy)]) { coast[i] = 1; break; } }
   // ocean światowy = woda połączona z punktem na środku Atlantyku (bez Morza Kaspijskiego i jezior)
   ocean = new Uint8Array(W * H); const q = [idx(...toXY(0, -30))]; ocean[q[0]] = 1;
-  while (q.length) { const i = q.pop(), x = i % W, y = (i - x) / W; for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const ny = y + dy; if (ny < 0 || ny >= H) continue; const j = idx(x + dx, ny); if (!land[j] && !ocean[j]) { ocean[j] = 1; q.push(j); } } }
-  cache.clear(); portCache.clear();
+  while (q.length) { const i = q.pop(), x = i % W, y = (i - x) / W; for (const [dx, dy] of N4) { const ny = y + dy; if (ny < 0 || ny >= H) continue; const j = idx(x + dx, ny); if (!land[j] && !ocean[j]) { ocean[j] = 1; q.push(j); } } }
+  cache.clear(); portCache.clear(); pathCache.clear();
 }
 
-// najbliższa komórka oceanu (port) do punktu na lądzie
+// czy przy komórce wody (±2) leży ląd danego państwa
+function nearOwner(i, o) {
+  const x = i % W, y = (i - x) / W;
+  for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) { const ny = y + dy; if (ny >= 0 && ny < H && owner[idx(x + dx, ny)] === o) return true; }
+  return false;
+}
+// najbliższa komórka oceanu (port) do punktu na lądzie — na wybrzeżu tego samego państwa, jeśli ma dostęp do morza
 function port(lat, lon) {
   const k = lat.toFixed(2) + ',' + lon.toFixed(2); if (portCache.has(k)) return portCache.get(k);
-  const [sx, sy] = toXY(lat, lon), start = idx(sx, sy), seen = new Set([start]); let q = [start], found = -1;
-  for (let r = 0; r < 200 && q.length && found < 0; r++) {
+  const [sx, sy] = toXY(lat, lon), start = idx(sx, sy), o = owner[start], seen = new Set([start]);
+  let q = [start], found = -1, anyOcean = -1;
+  for (let r = 0; r < 320 && q.length && found < 0; r++) {
     const nq = [];
-    for (const i of q) { if (ocean[i]) { found = i; break; } const x = i % W, y = (i - x) / W; for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const ny = y + dy; if (ny < 0 || ny >= H) continue; const j = idx(x + dx, ny); if (!seen.has(j)) { seen.add(j); nq.push(j); } } }
+    for (const i of q) {
+      if (ocean[i]) { if (anyOcean < 0) anyOcean = i; if (!o || nearOwner(i, o)) { found = i; break; } }
+      const x = i % W, y = (i - x) / W;
+      for (const [dx, dy] of N4) { const ny = y + dy; if (ny < 0 || ny >= H) continue; const j = idx(x + dx, ny); if (!seen.has(j)) { seen.add(j); nq.push(j); } }
+    }
+    if (anyOcean >= 0 && r > 220) break;   // państwo bez morza: najbliższe wybrzeże w ogóle
     q = nq;
   }
+  if (found < 0) found = anyOcean;
   portCache.set(k, found); return found;
 }
 
 // A* po wodzie; koszt ~ odległość, przy brzegu i w lodach drożej (trasy trzymają się otwartego morza, omijają Arktykę)
 function astar(s, t) {
   const cosT = new Float32Array(H); for (let y = 0; y < H; y++) cosT[y] = Math.max(0.05, Math.cos((90 - (y + 0.5) / RES) * Math.PI / 180));
-  const tx = t % W, ty = (t - tx) / W;
+  const tx = t % W, ty = (t - tx) / W, EPS = 0.35;   // słaba heurystyka: przy biegunach ruch w długości jest „tani”, mocniejsza psuje wyszukiwanie
   const hf = i => { const x = i % W, y = (i - x) / W; let dx = Math.abs(x - tx); dx = Math.min(dx, W - dx); return Math.hypot(dx * cosT[Math.round((y + ty) / 2)], y - ty); };
   const gS = new Float32Array(W * H).fill(Infinity), from = new Int32Array(W * H).fill(-1);
-  const heap = [[hf(s), s, 0]]; gS[s] = 0; const EPS = 0.35;   // słaba heurystyka: przy biegunach ruch w długości jest „tani”, więc mocniejsza przeszacowuje i psuje wyszukiwanie
-  const push = n => { heap.push(n); let i = heap.length - 1; while (i) { const p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; [heap[p], heap[i]] = [heap[i], heap[p]]; i = p; } };
-  const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === i) break; [heap[m], heap[i]] = [heap[i], heap[m]]; i = m; } } return top; };
+  // kopiec na zwykłych tablicach liczb (szybszy niż tablica par)
+  const K = [], V = [];
+  const push = (k, v) => { let i = K.length; K.push(k); V.push(v); while (i) { const p = (i - 1) >> 1; if (K[p] <= k) break; K[i] = K[p]; V[i] = V[p]; i = p; } K[i] = k; V[i] = v; };
+  const pop = () => { const v = V[0], lk = K.pop(), lv = V.pop(); const n = K.length; if (n) { let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = -1, mk = lk; if (l < n && K[l] < mk) { m = l; mk = K[l]; } if (r < n && K[r] < mk) { m = r; mk = K[r]; } if (m < 0) break; K[i] = K[m]; V[i] = V[m]; i = m; } K[i] = lk; V[i] = lv; } return v; };
+  gS[s] = 0; push(hf(s), s);
+  const done = new Uint8Array(W * H);
   let steps = 0;
-  while (heap.length && steps++ < 3000000) {
-    const [, i, gq] = pop(); if (i === t) break; if (gq > gS[i]) continue;
+  while (K.length && steps++ < 4000000) {
+    const i = pop(); if (done[i]) continue; done[i] = 1; if (i === t) break;
     const x = i % W, y = (i - x) / W, gi = gS[i];
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       if (!dx && !dy) continue; const ny = y + dy; if (ny < 0 || ny >= H) continue;
-      const j = idx(x + dx, ny); if (!ocean[j]) continue;
+      const j = idx(x + dx, ny); if (!ocean[j] || done[j]) continue;
+      if (dx && dy && !ocean[idx(x + dx, y)] && !ocean[idx(x, ny)]) continue;   // bez „przeciskania się” po skosie między lądem
       const lat = 90 - (ny + 0.5) / RES;
       const c = Math.hypot(dx * cosT[ny], dy) * (coast[j] ? 2.2 : 1) * (Math.abs(lat) > 64 ? 5 : 1);
-      if (gi + c < gS[j]) { gS[j] = gi + c; from[j] = i; push([gS[j] + EPS * hf(j), j, gS[j]]); }
+      if (gi + c < gS[j]) { gS[j] = gi + c; from[j] = i; push(gS[j] + EPS * hf(j), j); }
     }
   }
   if (from[t] < 0 && s !== t) return null;
@@ -131,7 +150,6 @@ export function snap(p) {
   return { ...wp, lat, lon: lon + 360 * Math.round((+p.lon - lon) / 360) };
 }
 // pełna trasa okrętu: punkty z rozkazu połączone odcinkami po morzu (wynik zapamiętany)
-const pathCache = new Map();
 export function seaPath(route) {
   const key = route.map(p => `${(+p.lat).toFixed(3)},${(+p.lon).toFixed(3)}`).join(';');
   if (pathCache.has(key)) return pathCache.get(key);
