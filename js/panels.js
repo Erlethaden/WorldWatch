@@ -3,12 +3,13 @@ import { S, G, run, now, newId, gameNow, turn, realGM, isAdmin, myCountry, persp
   cFlag, cName, cDem, cColor, country, countriesSorted, userOfCountry, charView, charsOf, charLocation, writeChar,
   NEWS_CATS, RELIABILITY, RELATIONS, REL_COLOR, TREATY_TYPES, tr, trOpts, statusChip, KINDS, VIS } from './store.js';
 import { h, esc, form, modal, confirmBox, toast, chip, kv, download, img, searchable } from './ui.js';
-import { select } from './map.js';
+import { select, TERR_ICON, TERR_NOUN } from './map.js';
 import * as U from './units.js';
 import * as P from './press.js';
 import { GM, customFields, statSections } from './gm.js';
 import { blocsSection, blocsOf } from './blocs.js';
 import { battleForm, battleBlock } from './battle.js';
+import { statNum, deltaOf, statChart, turnSummary } from './turns.js';
 
 const goTab = t => window.dispatchEvent(new CustomEvent('ww:tab', { detail: t }));
 const ctxCountry = () => { const p = persp(); return p && p !== 'gm' ? p : null; };
@@ -129,20 +130,13 @@ const countryPanel = {
 
 // ───────── RANKING: porównanie państw w polach statystyk ─────────
 let countryMode = 'list', rankKey = null, rankAsc = false;
-// „10,6 mln”, „55 000”, „82%”, „1,9 bln $” → liczba do sortowania
-export function statNum(v) {
-  if (v == null || v === '') return null;
-  const s = String(v).toLowerCase().replace(/\s|\u00a0/g, '').replace(',', '.');
-  const m = s.match(/-?\d+(\.\d+)?/); if (!m) return null;
-  let n = parseFloat(m[0]);
-  if (/bln|tr|bilion/.test(s)) n *= 1e12; else if (/mld|bn|miliard/.test(s)) n *= 1e9; else if (/mln|mio|milion|m$/.test(s)) n *= 1e6; else if (/tys|k$/.test(s)) n *= 1e3;
-  return n;
-}
 function statVal(c, f) {
   if (f.public) return c.custom?.[f.key];
   const priv = S.data.countryPrivate[c.id];   // niejawne: GM widzi wszystkie, gracz tylko swoje
   return priv ? priv.custom?.[f.key] : undefined;
 }
+const arrow = (f, r) => { if (r.hidden || r.n == null) return null; const d = deltaOf(f, r.c.id, r.raw); if (!d || !d.d) return null;
+  return h('small.' + (d.d > 0 ? 'up' : 'down'), { title: `od tury ${d.T}` }, ` ${d.d > 0 ? '▲' : '▼'}${d.pct != null ? Math.abs(d.pct).toFixed(Math.abs(d.pct) < 10 ? 1 : 0) + '%' : ''}`); };
 function leaderboard() {
   const gm = realGM(), me = myCountry(), fields = customFields().filter(f => gm || f.public || me);
   const list = countriesSorted();
@@ -154,7 +148,7 @@ function leaderboard() {
   const row = (r, i) => h('div.rk-row' + (r.c.id === me ? '.me' : ''), { style: { '--c': r.c.color || '#3fa7ff' } },
     h('span.rk-pos', r.n != null ? String(i + 1) : '–'), h('span.rk-name', `${r.c.flag} ${r.c.name}`),
     h('span.rk-bar', r.n != null ? h('i', { style: { width: Math.max(2, Math.abs(r.n) / max * 100) + '%', background: r.c.color || '#3fa7ff' } }) : null),
-    h('b.rk-val', r.hidden ? '🔒' : r.raw ?? '—'));
+    h('b.rk-val', r.hidden ? '🔒' : r.raw ?? '—', arrow(f, r)));
   // tabela wszystkich pól (przewijana w poziomie)
   const cols = fields, cell = (c, x) => { const v = statVal(c, x); return v === undefined && !x.public ? '🔒' : v ?? '—'; };
   return h('div.rank',
@@ -163,6 +157,8 @@ function leaderboard() {
       h('button.btn.sm', { title: 'Odwróć kolejność', onclick: () => { rankAsc = !rankAsc; goTab('country'); } }, rankAsc ? '↑ rosnąco' : '↓ malejąco')),
     !gm && !f.public ? h('p.help', 'Pole niejawne: widzisz tylko wartość swojego państwa.') : null,
     h('div.rk-list', known.map(row), rest.map(r => row(r, 0))),
+    h('h3', `📈 Historia: ${f.label}`),
+    statChart(f, f.public || gm ? list : list.filter(c => c.id === me), c => statVal(c, f)) || h('p.help', 'Brak migawek. Stan statystyk zapisuje się automatycznie na koniec każdej tury (GM → Tury).'),
     h('h3', 'Porównanie wszystkich pól'),
     h('div.table-wrap', h('table.tbl.rk-table',
       h('thead', h('tr', h('th', 'Państwo'), cols.map(x => h('th', { role: 'button', tabIndex: 0, onclick: () => { rankKey = x.key; goTab('country'); }, title: 'Pokaż ranking' }, x.label + (x.public ? '' : ' 🔒'))))),
@@ -229,8 +225,9 @@ async function projectForm(cid, p = {}, idx = -1) {
 function territorySection(cid) {
   const T = Object.values(S.data.territories), held = T.filter(t => t.controller === cid), lost = T.filter(t => t.previous === cid && t.controller !== cid);
   if (!held.length && !lost.length) return null;
-  const row = (t, who) => h('div.rel-row', h('span', `${t.status === 'contested' ? '⚔️' : t.status === 'annexed' ? '🏴' : '🪖'} ${t.label}`), h('small.muted', `${who} · ${t.status === 'annexed' ? 'aneksja' : t.status === 'contested' ? 'walki' : 'okupacja'}`));
-  return h('section', h('h3', 'Terytorium'), held.map(t => row(t, t.previous ? 'zdobyte od ' + cFlag(t.previous) + ' ' + cName(t.previous) : 'kontrolowane')), lost.map(t => row(t, 'utracone na rzecz ' + cFlag(t.controller) + ' ' + cName(t.controller))));
+  const row = (t, who) => h('div.rel-row', h('span', `${TERR_ICON[t.status] || ''} ${t.label}`), h('small.muted', `${who} · ${TERR_NOUN[t.status] || t.status}`));
+  const pup = t => t.status === 'puppet';
+  return h('section', h('h3', 'Terytorium'), held.map(t => row(t, pup(t) ? 'państwo zależne' : t.previous ? 'zdobyte od ' + cFlag(t.previous) + ' ' + cName(t.previous) : 'kontrolowane')), lost.map(t => row(t, pup(t) ? 'rządzi nami ' + cFlag(t.controller) + ' ' + cName(t.controller) : 'utracone na rzecz ' + cFlag(t.controller) + ' ' + cName(t.controller))));
 }
 function charsSection(cid, mine) {
   const chars = charsOf(cid);
@@ -406,11 +403,11 @@ const chron = {
       const by = {}; list.forEach(e => (by[e.turn || 0] = by[e.turn || 0] || []).push(e));
       body = Object.entries(by).sort((a, b) => b[0] - a[0]).map(([t, es]) => {
         const perC = {}; es.forEach(e => { const cs = (e.countries || []).length ? e.countries : ['__world']; cs.forEach(c => (perC[c] = perC[c] || []).push(e)); });
-        return h('div.turn-rep', h('h3', `TURA ${t}`), Object.entries(perC).map(([c, xs]) => h('div', h('b', c === '__world' ? '🌍 Świat' : `${cFlag(c)} ${cName(c)}`), h('ul', xs.map(entry)))));
+        return h('div.turn-rep', h('div.row-between', h('h3', `TURA ${t}`), h('button.btn.xs', { onclick: () => turnSummary(+t) }, '📋 Podsumowanie')), Object.entries(perC).map(([c, xs]) => h('div', h('b', c === '__world' ? '🌍 Świat' : `${cFlag(c)} ${cName(c)}`), h('ul', xs.map(entry)))));
       });
     }
     return h('div.chron', h('div.feed-head', h('h2', '📜 KRONIKA ŚWIATA'), h('div.btn-row', gm ? h('button.btn.sm', { onclick: () => histForm() }, '+ Wpis') : null, h('button.btn.sm', { onclick: exportChron }, '⬇ Eksport'))),
-      h('div.filters', [['years', 'Według lat'], ['turns', 'Raporty tur']].map(([k, l]) => h('button.chip' + (chronMode === k ? '.on' : ''), { onclick: () => { chronMode = k; goTab('chron'); } }, l))),
+      h('div.filters', [['years', 'Według lat'], ['turns', 'Raporty tur']].map(([k, l]) => h('button.chip' + (chronMode === k ? '.on' : ''), { onclick: () => { chronMode = k; goTab('chron'); } }, l)), h('button.chip', { title: 'Cała kampania tura po turze, z mapami — do zapisania jako PDF', onclick: () => import('./chronicle.js').then(m => m.campaignPdf()) }, '📕 Kronika PDF')),
       list.length ? body : h('div.empty', 'Historia tej kampanii jeszcze nie została napisana.'));
   }
 };

@@ -9,7 +9,7 @@ export const S = {
   user: null, me: null, persp: 'gm', clock: null, game: {}, lastError: null,
   data: {}, src: {}, unsubs: [], listeners: new Set(), errors: []
 };
-const ALL = ['countries', 'countryPrivate', 'characters', 'charSecrets', 'units', 'unitSecrets', 'intel', 'news', 'gmNotes', 'relations', 'treaties', 'messages', 'history', 'territories', 'users', 'logs', 'undo', 'backups', 'blocs'];
+const ALL = ['countries', 'countryPrivate', 'characters', 'charSecrets', 'units', 'unitSecrets', 'intel', 'news', 'gmNotes', 'relations', 'treaties', 'messages', 'history', 'territories', 'users', 'logs', 'undo', 'backups', 'blocs', 'statHistory'];
 ALL.forEach(c => { S.data[c] = {}; S.src[c] = {}; });
 
 // ───────── zdarzenia zmian ─────────
@@ -53,12 +53,13 @@ export function startSubscriptions() {
   S.unsubs.push(DB.listenDoc('meta/admin', d => { S.admin = d || {}; emit(); }));
   ['countries', 'characters', 'units', 'relations', 'history', 'territories', 'users'].forEach(c => sub(c, 'all'));
   if (r === 'gm' || r === 'admin') {
-    ['countryPrivate', 'charSecrets', 'unitSecrets', 'intel', 'news', 'gmNotes', 'treaties', 'messages', 'undo', 'blocs'].forEach(c => sub(c, 'all'));
+    ['countryPrivate', 'charSecrets', 'unitSecrets', 'intel', 'news', 'gmNotes', 'treaties', 'messages', 'undo', 'blocs', 'statHistory'].forEach(c => sub(c, 'all'));
     if (r === 'admin') { sub('logs', 'all'); sub('backups', 'all'); }
   } else {
     sub('news', 'pub', [['audienceAll', '==', true]]);
     sub('treaties', 'pub', [['secret', '==', false]]);
     sub('blocs', 'pub', [['secret', '==', false]]);
+    sub('statHistory', 'pub', [['countryId', '==', '__pub']]);
     if (C) {
       sub('unitSecrets', 'mine', [['countryId', '==', C]]);
       sub('charSecrets', 'mine', [['countryId', '==', C]]);
@@ -68,6 +69,7 @@ export function startSubscriptions() {
       sub('messages', 'mine', [['parties', 'array-contains', C]]);
       sub('blocs', 'mine', [['members', 'array-contains', C]]);
       sub('blocs', 'inv', [['invites', 'array-contains', C]]);
+      sub('statHistory', 'mine', [['countryId', '==', C]]);
       S.unsubs.push(DB.listenDoc('countryPrivate/' + C, d => setSrc('countryPrivate', 'mine', d ? [d] : [])));
     }
     // statystyki państw oznaczonych jako publiczne
@@ -430,7 +432,7 @@ export function writeChar(w, c) {
 }
 
 // ───────── BACKUPY ─────────
-export const BACKUP_COLS = ['countries', 'countryPrivate', 'characters', 'charSecrets', 'units', 'unitSecrets', 'intel', 'news', 'gmNotes', 'relations', 'treaties', 'messages', 'history', 'territories', 'images', 'blocs', 'users', 'meta'];
+export const BACKUP_COLS = ['countries', 'countryPrivate', 'characters', 'charSecrets', 'units', 'unitSecrets', 'intel', 'news', 'gmNotes', 'relations', 'treaties', 'messages', 'history', 'territories', 'images', 'blocs', 'statHistory', 'users', 'meta'];
 export async function snapshotWorld() {
   const data = {};
   for (const c of BACKUP_COLS) data[c] = await DB.getAll(c);

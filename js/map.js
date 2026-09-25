@@ -86,7 +86,7 @@ export function initMap(el, { onSelectUnit, onCountryClick }) {
     });
     if (!CARTO_KEY) L.geoJSON(fc, { pane: 'land', renderer: L.canvas({ pane: 'land', padding: 0.5 }), interactive: false, style: { stroke: false, fillColor: '#18222e', fillOpacity: 1 } }).addTo(map);
     setTimeout(() => { try { SR.init(fc); render(); } catch (e) { console.warn('searoute', e); } }, 50);   // maska wody dla szlaków morskich
-    geo = L.geoJSON(fc, { style: styleCountry, onEachFeature: (f, l) => l.on('click', e => { if (pickCb || drawCb) return; const t = terrByIso(f.id), c = t ? { id: t.controller } : byIsoN(f.id); if (c) { L.DomEvent.stop(e); onCountry(c.id); } }) }).addTo(groups.countries);
+    geo = L.geoJSON(fc, { style: styleCountry, onEachFeature: (f, l) => l.on('click', e => { if (pickCb || drawCb) return; const t = terrByIso(f.id), c = t && !(t.status === 'puppet' && byIsoN(f.id)) ? { id: t.controller } : byIsoN(f.id); if (c) { L.DomEvent.stop(e); onCountry(c.id); } }) }).addTo(groups.countries);
   }).catch(e => { console.error('geo', e); toast('⚠️ Nie wczytano konturów mapy: ' + e.message, 'err', 20000); });
   map.on('click', e => {
     if (drawCb) return drawCb(e);
@@ -100,13 +100,18 @@ export function initMap(el, { onSelectUnit, onCountryClick }) {
 }
 const byIsoN = n => Object.values(S.data.countries).find(c => String(c.isoN) === String(n));
 // podbój: terytorium (cały kraj z mapy) pod kontrolą innego państwa
-export const TERR_STATUS = { occupied: 'okupowane', annexed: 'zaanektowane', contested: 'sporne / walki' };
-const terrByIso = n => Object.values(S.data.territories).find(t => t.kind === 'country' && String(t.isoN) === String(n));
-const terrStyle = t => { const col = cColor(t.controller); return { color: t.status === 'contested' ? '#ff4545' : col, weight: 1.6, opacity: 0.95, dashArray: t.status === 'annexed' ? null : '6 4', fillColor: col, fillOpacity: t.status === 'annexed' ? 0.24 : 0.16 }; };
+export const TERR_STATUS = { occupied: 'okupowane', annexed: 'zaanektowane', contested: 'sporne / walki', puppet: 'państwo marionetkowe' };
+export const TERR_NOUN = { occupied: 'okupacja', annexed: 'aneksja', contested: 'walki', puppet: 'marionetka' };
+export const TERR_ICON = { occupied: '🪖', annexed: '🏴', contested: '⚔️', puppet: '🎭' };
+// powtórka: mapa pokazuje stan z chwili S.viewTime (tereny zajęte później jeszcze nie istnieją)
+export const viewNow = () => S.viewTime ?? gameNow();
+const terrNow = t => S.viewTime == null || (t.since || 0) <= S.viewTime;
+const terrByIso = n => Object.values(S.data.territories).find(t => t.kind === 'country' && String(t.isoN) === String(n) && terrNow(t));
+const terrStyle = t => { const col = cColor(t.controller); return { color: t.status === 'contested' ? '#ff4545' : col, weight: 1.6, opacity: 0.95, dashArray: t.status === 'annexed' ? null : t.status === 'puppet' ? '1 5' : '6 4', fillColor: col, fillOpacity: t.status === 'annexed' ? 0.24 : t.status === 'puppet' ? 0.1 : 0.16, ...(t.status === 'puppet' ? { weight: 2.4, lineCap: 'round' } : {}) }; };
 // państwa spoza gry (NPC) istnieją na mapie, można je zająć, ale nie mają statystyk
 export const npcOf = isoN => { const p = COUNTRY_PRESETS.find(x => x.n === String(isoN).padStart(3, '0')); return p ? { name: p.pl || p.name, flag: flagOf(p.c) } : null; };
 export const prevLabel = t => t.previous ? `${cFlag(t.previous)} ${cName(t.previous)}` : t.previousName || '';
-const terrTip = t => `${cFlag(t.controller)} <b>${esc(cName(t.controller))}</b> — ${TERR_STATUS[t.status] || t.status}<br>${esc(t.label || '')}${prevLabel(t) ? `<br><small>wcześniej: ${esc(prevLabel(t))}</small>` : ''}`;
+const terrTip = t => t.status === 'puppet' ? `🎭 <b>${esc(t.label || '')}</b> — państwo marionetkowe<br>zależne od: ${cFlag(t.controller)} ${esc(cName(t.controller))}` : `${cFlag(t.controller)} <b>${esc(cName(t.controller))}</b> — ${TERR_STATUS[t.status] || t.status}<br>${esc(t.label || '')}${prevLabel(t) ? `<br><small>wcześniej: ${esc(prevLabel(t))}</small>` : ''}`;
 // część kraju: narysowany obszar przycięty do granic tego kraju (polygon-clipping)
 const featureOf = isoN => geo?.getLayers().find(l => String(l.feature.id) === String(isoN));
 const clipCache = new Map();
@@ -134,6 +139,7 @@ export function shapeCenter(mp) {
   return a > b ? null : { lat: +((c + d) / 2).toFixed(3), lon: +((a + b) / 2).toFixed(3) };
 }
 export function focusCountry(isoN) { const f = featureOf(isoN); if (f) map.fitBounds(f.getBounds(), { padding: [30, 30], maxZoom: 6 }); }
+export const worldFeatures = () => geo ? geo.getLayers().map(l => l.feature) : [];
 export const geoNames = () => geo ? geo.getLayers().map(l => ({ isoN: String(l.feature.id), name: npcOf(l.feature.id)?.name || l.feature.properties.name })).sort((a, b) => a.name.localeCompare(b.name)) : [];
 function styleCountry(f) {
   // podświetlony sojusz (Dyplomacja → Pokaż na mapie)
@@ -240,9 +246,9 @@ export function render() {
   setTimeout(() => map.getContainer().querySelectorAll('path.leaflet-interactive').forEach(p => p.setAttribute('tabindex', '-1')));
   if (geo) { geo.setStyle(styleCountry); geo.eachLayer(l => { const t = terrByIso(l.feature.id), g = byIsoN(l.feature.id), n = npcOf(l.feature.id); if (t) l.bindTooltip(terrTip(t), { sticky: true }); else if (!g) l.bindTooltip(`${n?.flag || '🏳️'} ${esc(n?.name || l.feature.properties.name)} <small>· NPC, bez statystyk</small>`, { sticky: true }); else l.unbindTooltip(); }); }
   groups.static.clearLayers(); groups.lines.clearLayers();
-  Object.values(S.data.territories).filter(t => t.kind === 'area' && (t.geo || t.points?.length > 2)).forEach(t =>
+  Object.values(S.data.territories).filter(t => t.kind === 'area' && (t.geo || t.points?.length > 2) && terrNow(t)).forEach(t =>
     L.polygon(areaShape(t), { ...terrStyle(t), pane: 'zones' }).bindTooltip(terrTip(t), { sticky: true }).on('click', e => { if (drawCb || pickCb) return; L.DomEvent.stop(e); onCountry(t.controller); }).addTo(groups.static));
-  const t = gameNow(), views = unitViews(), keys = new Set();
+  const t = viewNow(), views = unitViews(), keys = new Set();
   views.forEach(v => {
     const lay = layerOf(v);
     if (v.kind === 'zone') {
@@ -323,7 +329,7 @@ function drawSelection() {
   selLayer.clearLayers();
   const mk = selected && markers.get(selected); const v = mk?.v || (selected && unitViews().find(x => x.key === selected));
   if (!v) return;
-  const t = gameNow();
+  const t = viewNow();
   if (v.route && v.route.length > 1) {
     const m = motionOf(v, t), col = colorOf(v), path = travelRoute(v);
     const draw = pts => NAVAL.has(v.kind) ? G.unwrap(pts) : G.gcLine(pts);   // szlak morski ma już gęste punkty
@@ -354,7 +360,7 @@ export function flyTo(lat, lon, z = 5) { map && map.flyTo([lat, lon], z, { durat
 // samolot po wylądowaniu znika z mapy (zostaje na listach; wraca po wybraniu go albo przy nowej podróży)
 const landed = (v, p) => v.kind === 'aircraft' && p.phase === 'after' && selected !== v.key;
 function tick() {
-  const t = gameNow();
+  const t = viewNow();
   for (const [, mk] of markers) {
     const p = posOf(mk.v, t); if (!p) continue;
     if (landed(mk.v, p)) { render(); break; }

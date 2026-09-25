@@ -600,3 +600,25 @@ body.persp-on #map { box-shadow: inset 0 0 0 2px #3fd0ff66; }
 .rk-table th[role=button] { cursor: pointer; white-space: nowrap; }
 .rk-table td.on { color: var(--acc); font-weight: 600; }
 .rk-table tr.me td:first-child { color: var(--acc); }
+
+/* ───── historia statystyk, podsumowanie tury, powtórka ───── */
+.row-between { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.up { color: var(--green); } .down { color: var(--red); }
+.rk-val small { font-size: 11px; margin-left: 4px; }
+.st-fig { margin: 6px 0 14px; }
+.st-chart { width: 100%; height: auto; display: block; }
+.st-chart .grid { stroke: var(--line); stroke-width: 1; }
+.st-chart .ax { fill: var(--muted); font: 10px var(--mono); }
+.st-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); margin-top: 4px; }
+.st-legend i { display: inline-block; width: 12px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 5px; background: var(--c); }
+.tsum section { margin: 0 0 14px; }
+.tsum h3 { margin: 0 0 6px; }
+.tsum ul { margin: 0; padding-left: 18px; }
+.tsum li { margin: 3px 0; }
+#replaybar { position: absolute; left: 10px; right: calc(var(--side) + 10px); bottom: 12px; z-index: 850; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; background: color-mix(in srgb, var(--panel) 94%, transparent); border: 1px solid var(--acc); border-radius: 10px; box-shadow: 0 6px 24px #0008; }
+#replaybar input[type=range] { flex: 1 1 200px; accent-color: var(--acc); min-width: 140px; }
+.rp-tag { font: 700 11px var(--mono); letter-spacing: .08em; color: var(--acc-ink); background: var(--acc); padding: 2px 6px; border-radius: 4px; }
+.rp-date { font-family: var(--mono); font-size: 12.5px; min-width: 170px; }
+body.replay #map { outline: 2px solid var(--acc); outline-offset: -2px; }
+@media (max-width: 820px) { #replaybar { right: 10px; bottom: calc(var(--nav) + 10px); } .rp-date { min-width: 0; flex-basis: 100%; order: -1; } }
+body.replay .leaflet-bottom { bottom: 64px; }

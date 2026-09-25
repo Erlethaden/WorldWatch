@@ -4,7 +4,8 @@ import { ADMIN_UIDS } from './db.js';
 import { S, emit, onChange, startSubscriptions, stopAll, realGM, role, myCountry, persp, gmView, gameNow, turn, unitViews, statusOf, statusChip, tr, posOf, speedKmh, feedItems,
   cFlag, cName, flagOf, countriesSorted, allPlaces, placeLabel, parsePlace, nearestPlace, charName, setToast, run, G, createBackup, cleanupLogs, KINDS } from './store.js';
 import { h, $, $$, esc, toast, modal, form, hooks, confirmBox, kv, searchable } from './ui.js';
-import { initMap, render as renderMap, select, selectedKey, LAYERS, isOn, toggleLayer, pickOnMap, flyTo, colorOf, linesMode, canSeeAllLines, setLinesAll, setLineFocus } from './map.js';
+import { initMap, render as renderMap, select, selectedKey, LAYERS, isOn, toggleLayer, pickOnMap, flyTo, colorOf, linesMode, canSeeAllLines, setLinesAll, setLineFocus, tick } from './map.js';
+import { startReplay } from './turns.js';
 import * as U from './units.js';
 import { PANELS, openNews } from './panels.js';
 import { autoClean } from './gm.js';
@@ -199,6 +200,7 @@ function refreshAll() {
     const lm = linesMode(), all = canSeeAllLines(), who = lm.focus ? `${cFlag(lm.focus)} ${cName(lm.focus)}` : 'kliknij państwo';
     $('#layerbar').append(h('button.layer.on.lines-mode', { title: all ? 'Przełącz: wszystkie linie / tylko wybrane państwo' : 'Pokazujesz linie jednego państwa — kliknij inne na mapie; tu wracasz do swojego', onclick: () => { all ? setLinesAll(!lm.all) : setLineFocus(null); refreshAll(); } }, '🔗', h('span', lm.all ? 'Linie: wszystkie' : `Linie: ${who}`)));
   }
+  $('#layerbar').append(h('button.layer.replay-btn' + (S.viewTime != null ? '.on' : ''), { title: 'Powtórka osi czasu: przewiń mapę do dowolnego momentu gry', onclick: () => startReplay(() => { renderMap(); tick(); }) }, '⏪', h('span', 'Powtórka')));
   const pb = $('#perspbar'), pv = realGM() && S.persp && S.persp !== 'gm' ? S.persp : null;
   if (pb) { pb.hidden = !pv; document.body.classList.toggle('persp-on', !!pv); if (pv) pb.replaceChildren(h('span', '👁 Widzisz świat jako ', h('b', pv === '__obs' ? 'obserwator' : `${cFlag(pv)} ${cName(pv)}`)), h('button.btn.xs', { onclick: () => { S.persp = 'gm'; select(null); refreshAll(); } }, 'Wróć do widoku GM')); }
   const dl = $('#dl-places'); if (dl && (dl.childElementCount < 10 || S._plc !== Object.keys(S.data.countries).length)) { S._plc = Object.keys(S.data.countries).length; dl.replaceChildren(...allPlaces().map(p => h('option', { value: placeLabel(p) }))); }

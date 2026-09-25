@@ -4,11 +4,12 @@ import { S, G, DB, run, now, newId, isDemo, gameNow, turn, realGM, isAdmin, pers
 import { h, esc, form, modal, confirmBox, toast, chip, kv, download, pickFile, ago } from './ui.js';
 import { COUNTRY_PRESETS } from './places.js';
 import { AUTH } from './db.js';
-import { select, drawArea, geoNames, TERR_STATUS, flyTo, npcOf, prevLabel, focusCountry, areaGeo, shapeCenter } from './map.js';
+import { select, drawArea, geoNames, TERR_STATUS, TERR_ICON, flyTo, npcOf, prevLabel, focusCountry, areaGeo, shapeCenter } from './map.js';
 import { hideModals, img } from './ui.js';
 import { usedImageRefs } from './images.js';
 import * as U from './units.js';
 import { seedWorld } from './seed.js';
+import { snapshotStats, snapshotNow, turnSummary } from './turns.js';
 
 const goTab = () => window.dispatchEvent(new CustomEvent('ww:tab', { detail: 'gm' }));
 let sub = 'players';
@@ -182,6 +183,7 @@ function turns() {
   return h('div',
     h('div.turn-big', h('small', 'AKTUALNA TURA'), h('b', turn()), h('small', G.fmtDT(gameNow()) + ' UTC')),
     h('div.btn-row', h('button.btn.primary', { onclick: newTurn }, '⏭ Zakończ turę i rozpocznij następną'), h('button.btn', { onclick: () => import('./app.js').then(a => a.clockModal()) }, '⏱ Zegar gry')),
+    h('div.btn-row.wrap', h('button.btn.sm', { onclick: () => turnSummary(turn()) }, '📋 Podsumowanie tury'), turn() > 1 ? h('button.btn.sm', { onclick: () => turnSummary(turn() - 1) }, `📋 Tura ${turn() - 1}`) : null, h('button.btn.sm', { title: 'Migawka statystyk jest też robiona automatycznie przy końcu tury', onclick: snapshotNow }, '📸 Zapisz stan statystyk teraz'), h('button.btn.sm', { onclick: () => import('./chronicle.js').then(m => m.campaignPdf()) }, '📕 Kronika kampanii (PDF)')),
     h('section', h('h3', 'Ustawienia tur'), kv('Przesunięcie czasu przy nowej turze', g.turnAdvance ? G.fmtDur(g.turnAdvance) : 'brak'),
       h('button.btn.sm', { onclick: async () => { const v = await form('Ustawienia tur', [{ k: 'adv', label: 'Nowa tura przesuwa czas gry o', type: 'duration', value: g.turnAdvance || '', help: 'np. „30d” = miesiąc na turę; puste = bez skoku' }, { k: 'news', label: 'Ogłaszaj nową turę w newsach', type: 'check', value: g.turnNews !== false }]); if (v) run('TURN_SETTINGS', '', w => w.merge('meta/game', { turnAdvance: v.adv || 0, turnNews: v.news })); } }, '⚙️ Zmień')),
     h('p.muted', 'Nowa tura: automatyczny backup „Koniec tury N”, wpis w kronice, opcjonalny skok czasu i komunikat dla graczy. Raporty tur znajdziesz w zakładce Kronika → Raporty tur.'));
@@ -194,7 +196,9 @@ async function newTurn() {
   if (!b) return;
   const g = gameNow() + (v.adv || 0);
   await run('NEW_TURN', `${T} → ${T + 1}`, w => {
-    w.merge('meta/game', { turn: T + 1 });
+    const ts = S.game.turnStarts || {};
+    w.merge('meta/game', { turn: T + 1, turnStarts: { [T]: ts[T] ?? Math.min(gameNow(), ...Object.values(S.data.history).filter(e => e.turn === T).map(e => e.gameTime).filter(isFinite)), ...ts, [T + 1]: g } });
+    snapshotStats(w, T, gameNow());
     if (v.adv) { const c = S.clock || {}; w.set('meta/clock', { running: c.running !== false, rate: c.rate || 1, anchorGame: g, anchorReal: now() }); }
     if (v.summary) w.set('history/' + newId(), { turn: T, gameTime: gameNow(), text: v.summary, countries: [], createdAt: now() });
     w.set('history/' + newId(), { turn: T + 1, gameTime: g, text: `Rozpoczyna się tura ${T + 1}.`, countries: [], createdAt: now(), system: true });
@@ -398,7 +402,7 @@ function settings() {
 async function wipeWorld() {
   if (!await confirmBox('Usunąć WSZYSTKIE państwa, obiekty, postacie, newsy, traktaty, wiadomości i kronikę? Gracze, backupy i logi zostają. Najpierw zrobię backup.', { danger: true, ok: 'Wyczyść' })) return;
   const b = await createBackup('Przed wyczyszczeniem', { auto: false, reason: 'pre-wipe', quiet: true }); if (!b) return;
-  const cols = ['countries', 'countryPrivate', 'characters', 'charSecrets', 'units', 'unitSecrets', 'intel', 'news', 'gmNotes', 'relations', 'treaties', 'messages', 'history', 'territories', 'blocs'];
+  const cols = ['countries', 'countryPrivate', 'characters', 'charSecrets', 'units', 'unitSecrets', 'intel', 'news', 'gmNotes', 'relations', 'treaties', 'messages', 'history', 'territories', 'blocs', 'statHistory'];
   await run('WIPE_WORLD', '', w => cols.forEach(c => Object.keys(S.data[c]).forEach(id => w.del(`${c}/${id}`))), { undo: false });
 }
 
@@ -416,7 +420,7 @@ async function factoryReset() {
   if (!v) return;
   if (v.confirm.toUpperCase() !== 'USUŃ') return toast('Nie potwierdzono — nic nie usunięto', 'info');
   if (v.download) download(`worldwatch-przed-resetem-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(await snapshotWorld(), null, 1));
-  const cols = ['countries', 'countryPrivate', 'characters', 'charSecrets', 'units', 'unitSecrets', 'intel', 'news', 'gmNotes', 'relations', 'treaties', 'messages', 'history', 'territories', 'images', 'blocs'];
+  const cols = ['countries', 'countryPrivate', 'characters', 'charSecrets', 'units', 'unitSecrets', 'intel', 'news', 'gmNotes', 'relations', 'treaties', 'messages', 'history', 'territories', 'images', 'blocs', 'statHistory'];
   if (v.logs) cols.push('logs', 'undo');
   const ok = await run('FACTORY_RESET', Object.entries(v).filter(([, x]) => x === true).map(([k]) => k).join(','), async w => {
     for (const c of cols) (await DB.getAll(c)).forEach(d => w.del(`${c}/${d.id}`));
@@ -434,7 +438,7 @@ function terr() {
     h('div.btn-row', h('button.btn.sm.primary', { onclick: () => conquer() }, '⚔️ Podbój / zajęcie terenu')),
     h('p.muted', 'Całe państwo z mapy albo narysowany obszar przechodzi pod kontrolę innego państwa. Usunięcie wpisu = teren wraca do pierwotnego właściciela.'),
     list.map(t => h('div.gm-row', { style: { '--c': cColor(t.controller) } },
-      h('div.grow', h('b', `${cFlag(t.controller)} ${t.label}`), h('br'), h('small.muted', `${TERR_STATUS[t.status]} · ${t.kind === 'area' ? 'obszar' : 'całe terytorium'}${prevLabel(t) ? ' · wcześniej ' + prevLabel(t) : ''} · od ${G.fmtDate(t.since)}`)),
+      h('div.grow', h('b', `${cFlag(t.controller)} ${t.label}`), h('br'), h('small.muted', `${TERR_ICON[t.status] || ''} ${TERR_STATUS[t.status]} · ${t.kind === 'area' ? 'obszar' : 'całe terytorium'}${prevLabel(t) ? ' · wcześniej ' + prevLabel(t) : ''} · od ${G.fmtDate(t.since)}`)),
       h('div.btn-row', t.kind === 'area' && h('button.btn.xs', { onclick: () => { const c = shapeCenter(areaGeo(t)); c && flyTo(c.lat, c.lon, 5); } }, '🗺'),
         h('button.btn.xs', { onclick: () => conquer(t) }, '✏️'),
         h('button.btn.xs', { title: 'Wyzwolenie / zwrot', onclick: () => liberate(t) }, '🕊️')))),
@@ -449,9 +453,9 @@ export async function conquer(t = {}) {
     { k: 'isoN', label: 'Terytorium', type: 'select', value: t.isoN || t.clipIso || '', options: [['', '— wybierz —'], ...names.map(n => [n.isoN, (byIso(n.isoN)?.flag || npcOf(n.isoN)?.flag || '🏳️') + ' ' + n.name + (byIso(n.isoN) ? '' : ' (NPC)')])], show: x => x.kind !== 'area' },
     { k: 'label', label: 'Nazwa obszaru', value: t.kind === 'area' ? t.label : '', ph: 'np. Okręg kaliningradzki, Północna Gotlandia', show: x => x.kind !== 'country' },
     { k: 'redraw', label: 'Popraw narysowany obszar na mapie', type: 'check', value: false, show: x => x.kind !== 'country' && t.kind === 'area' },
-    { k: 'controller', label: 'Kontroluje teraz', type: 'select', value: t.controller, options: cOpts, req: true },
+    { k: 'controller', label: 'Kontroluje teraz (przy marionetce: państwo-patron)', type: 'select', value: t.controller, options: cOpts, req: true },
     { k: 'previous', label: 'Poprzedni właściciel', type: 'select', value: t.previous || (t.previousName ? 'npc:' + t.previousName : ''), options: [['', '— auto —'], ...cOpts, ...names.filter(n => !byIso(n.isoN)).map(n => ['npc:' + n.name, `${npcOf(n.isoN)?.flag || '🏳️'} ${n.name} (NPC)`])] },
-    { k: 'status', label: 'Status', type: 'select', value: t.status || 'occupied', options: Object.entries(TERR_STATUS) },
+    { k: 'status', label: 'Status', type: 'select', value: t.status || 'occupied', options: Object.entries(TERR_STATUS), help: 'Marionetka: państwo zachowuje nazwę i granice, ale rządzi nim patron. Na mapie ma kropkowaną obwódkę w kolorze patrona.' },
     { k: 'news', label: 'Ogłoś w newsach', type: 'check', value: !t.id }, { k: 'chron', label: 'Dodaj do kroniki', type: 'check', value: !t.id }
   ], { submit: t.id ? 'Zapisz' : 'Dalej' });
   if (!v) return;
@@ -471,19 +475,20 @@ export async function conquer(t = {}) {
   const previousName = previous ? '' : npc || (v.kind === 'country' ? label : partOf);
   const id = t.id || (v.kind === 'country' ? 'iso' + v.isoN : newId());
   const doc = { kind: v.kind, isoN: v.kind === 'country' ? v.isoN : null, geo: v.kind === 'area' ? JSON.stringify(shape) : null, points: null, clipIso: part ? v.isoN : null, label, controller: v.controller, previous, previousName, status: v.status, since: t.since || gameNow(), turn: t.turn || turn() };
-  const verb = { occupied: 'przejmuje kontrolę:', annexed: 'anektuje:', contested: 'walczy o:' }[v.status];
-  const head = `⚔️ ${cFlag(v.controller)} ${cName(v.controller)} ${verb} ${part && !v.label ? partOf + ' (część)' : label}`;
+  const verb = { occupied: 'przejmuje kontrolę:', annexed: 'anektuje:', contested: 'walczy o:', puppet: 'czyni państwem marionetkowym:' }[v.status];
+  const head = `${v.status === 'puppet' ? '🎭' : '⚔️'} ${cFlag(v.controller)} ${cName(v.controller)} ${verb} ${part && !v.label ? partOf + ' (część)' : label}`;
   await run(t.id ? 'UPDATE_TERRITORY' : 'CONQUEST', `${cName(v.controller)} → ${label}`, w => {
     w.set('territories/' + id, doc);
     const at = v.kind === 'area' ? shapeCenter(shape) : null;
     if (v.news) w.set('news/' + newId(), { headline: head, body: '', category: 'Conflict', reliability: 'Confirmed', breaking: true, special: true, countries: [v.controller, previous].filter(Boolean), gameTime: gameNow(), createdAt: now(), audienceAll: true, audience: [], source: 'gm', place: at ? { name: label, lat: at.lat, lon: at.lon } : null });
-    if (v.chron) w.set('history/' + newId(), { turn: turn(), gameTime: gameNow(), text: head.replace(/^⚔️ \S+ /, '') + '.', countries: [v.controller, previous].filter(Boolean), createdAt: now() });
+    if (v.chron) w.set('history/' + newId(), { turn: turn(), gameTime: gameNow(), text: head.replace(/^\S+ \S+ /, '') + '.', countries: [v.controller, previous].filter(Boolean), createdAt: now() });
   });
 }
 async function liberate(t) {
-  const v = await form(`🕊️ ${t.label} wraca do ${prevLabel(t) || 'pierwotnego właściciela'}`, [{ k: 'news', label: 'Ogłoś w newsach', type: 'check', value: true }, { k: 'chron', label: 'Dodaj do kroniki', type: 'check', value: true }], { submit: 'Zwróć teren' });
+  const pup = t.status === 'puppet';
+  const v = await form(pup ? `🕊️ ${t.label} odzyskuje niezależność` : `🕊️ ${t.label} wraca do ${prevLabel(t) || 'pierwotnego właściciela'}`, [{ k: 'news', label: 'Ogłoś w newsach', type: 'check', value: true }, { k: 'chron', label: 'Dodaj do kroniki', type: 'check', value: true }], { submit: 'Zwróć teren' });
   if (!v) return;
-  const head = `🕊️ ${cName(t.controller)} wycofuje wojska: ${t.label}`;
+  const head = pup ? `🕊️ ${t.label} wychodzi spod wpływu: ${cName(t.controller)}` : `🕊️ ${cName(t.controller)} wycofuje wojska: ${t.label}`;
   await run('LIBERATE_TERRITORY', t.label, w => {
     w.del('territories/' + t.id);
     if (v.news) w.set('news/' + newId(), { headline: head, body: '', category: 'Conflict', reliability: 'Confirmed', breaking: false, countries: [t.controller, t.previous].filter(Boolean), gameTime: gameNow(), createdAt: now(), audienceAll: true, audience: [], source: 'gm' });
