@@ -1,7 +1,7 @@
 // Morskie szlaki: trasa po wodzie (A* na siatce 0,25°) zamiast prostej linii między stolicami.
 // Maska lądu rysowana raz z konturów państw; kanały i wąskie cieśniny są „przekopane” ręcznie.
 const RES = 4, W = 360 * RES, H = 180 * RES;           // siatka 0,25° (1440 × 720): widać wyspy duńskie i cieśniny
-let land = null, ocean = null, coast = null, owner = null, comp = null;
+let land = null, ocean = null, coast = null, owner = null;
 const cache = new Map(), portCache = new Map(), pathCache = new Map();
 
 // cieśniny zbyt wąskie dla siatki: [lon, lat] od → do (bez Kanału Kilońskiego — duże okręty opływają Danię)
@@ -46,10 +46,6 @@ export function init(fc) {
   // ocean światowy = woda połączona z punktem na środku Atlantyku (bez Morza Kaspijskiego i jezior)
   ocean = new Uint8Array(W * H); const q = [idx(...toXY(0, -30))]; ocean[q[0]] = 1;
   while (q.length) { const i = q.pop(), x = i % W, y = (i - x) / W; for (const [dx, dy] of N4) { const ny = y + dy; if (ny < 0 || ny >= H) continue; const j = idx(x + dx, ny); if (!land[j] && !ocean[j]) { ocean[j] = 1; q.push(j); } } }
-  // spójne kawałki lądu (kontynenty, wyspy): trasa lądowa między różnymi kawałkami nie istnieje
-  comp = new Int32Array(W * H); let nc = 0;
-  for (let i0 = 0; i0 < W * H; i0++) { if (!land[i0] || comp[i0]) continue; comp[i0] = ++nc; const st = [i0];
-    while (st.length) { const i = st.pop(), x = i % W, y = (i - x) / W; for (const [dx, dy] of N4) { const ny = y + dy; if (ny < 0 || ny >= H) continue; const j = idx(x + dx, ny); if (land[j] && !comp[j]) { comp[j] = nc; st.push(j); } } } }
   cache.clear(); portCache.clear(); pathCache.clear();
 }
 
@@ -79,10 +75,12 @@ function port(lat, lon) {
 }
 
 // A* po wodzie; koszt ~ odległość, przy brzegu i w lodach drożej (trasy trzymają się otwartego morza, omijają Arktykę)
+// pass = null → trasa mieszana: ląd i ocean, każda zmiana ląd↔morze kosztuje PORT (przeładunek w porcie)
+const PORT = 10, LAND = 1.8;   // km po lądzie „droższy” niż po morzu: długie trasy idą statkiem, sąsiedzi drogą
 function astar(s, t, pass = ocean, maxCost = Infinity) {
-  const sea = pass === ocean;
+  const sea = pass === ocean, mix = !pass;
   const cosT = new Float32Array(H); for (let y = 0; y < H; y++) cosT[y] = Math.max(0.05, Math.cos((90 - (y + 0.5) / RES) * Math.PI / 180));
-  const tx = t % W, ty = (t - tx) / W, EPS = sea ? 0.35 : 0.9;   // słaba heurystyka: przy biegunach ruch w długości jest „tani”, mocniejsza psuje wyszukiwanie
+  const tx = t % W, ty = (t - tx) / W, EPS = sea || mix ? 0.35 : 0.9;   // słaba heurystyka: przy biegunach ruch w długości jest „tani”, mocniejsza psuje wyszukiwanie
   const hf = i => { const x = i % W, y = (i - x) / W; let dx = Math.abs(x - tx); dx = Math.min(dx, W - dx); return Math.hypot(dx * cosT[Math.round((y + ty) / 2)], y - ty); };
   const gS = new Float32Array(W * H).fill(Infinity), from = new Int32Array(W * H).fill(-1);
   // kopiec na zwykłych tablicach liczb (szybszy niż tablica par)
@@ -97,10 +95,12 @@ function astar(s, t, pass = ocean, maxCost = Infinity) {
     const x = i % W, y = (i - x) / W, gi = gS[i];
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       if (!dx && !dy) continue; const ny = y + dy; if (ny < 0 || ny >= H) continue;
-      const j = idx(x + dx, ny); if (!pass[j] || done[j]) continue;
-      if (dx && dy && !pass[idx(x + dx, y)] && !pass[idx(x, ny)]) continue;   // bez „przeciskania się” po skosie między lądem
+      const j = idx(x + dx, ny); if (done[j] || !(mix ? land[j] || ocean[j] : pass[j])) continue;
+      if (!mix && dx && dy && !pass[idx(x + dx, y)] && !pass[idx(x, ny)]) continue;
+      if (mix && dx && dy && land[i] !== land[j]) continue;   // port tylko przez bok komórki   // bez „przeciskania się” po skosie między lądem
       const lat = 90 - (ny + 0.5) / RES;
-      const c = Math.hypot(dx * cosT[ny], dy) * (sea && coast[j] ? 2.2 : 1) * (sea && Math.abs(lat) > 64 ? 5 : 1);
+      const w = mix ? (ocean[j] ? (coast[j] ? 1.6 : 1) * (Math.abs(lat) > 64 ? 5 : 1) : LAND * (Math.abs(lat) > 62 ? 3 : 1)) : (sea && coast[j] ? 2.2 : 1) * (sea && Math.abs(lat) > 64 ? 5 : 1);
+      const c = Math.hypot(dx * cosT[ny], dy) * w + (mix && land[i] !== land[j] ? PORT : 0);
       if (gi + c < gS[j]) { gS[j] = gi + c; from[j] = i; push(gS[j] + EPS * hf(j), j); }
     }
   }
@@ -163,30 +163,34 @@ export function seaRoute(A, B) {
   cache.set(key, res); return res;
 }
 
-// trasa lądowa (A* po lądzie, bez przepraw przez morze); null gdy dłuższa niż maxKm albo brak połączenia
-const KM = 111.32 / RES;   // jedna komórka siatki (≈ 27,8 km przy równiku)
+// szlak handlowy: najkrótsza trasa mieszana (ląd + morze, przeładunek w porcie kosztuje PORT)
+// → { segs: [{ mode: 'land'|'sea', pts: [[lat,lon]…] }…] } albo null
 const landCell = (lat, lon) => { const [x, y] = toXY(lat, lon); for (let r = 0; r <= 3; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) { const j = idx(x + dx, Math.min(H - 1, Math.max(0, y + dy))); if (land[j]) return j; } return -1; };
-export function landRoute(A, B, maxKm = Infinity) {
-  if (!land) return null;
-  const key = `L${A.lat.toFixed(2)},${A.lon.toFixed(2)}|${B.lat.toFixed(2)},${B.lon.toFixed(2)}|${Math.round(maxKm)}`;
+export function tradeRoute(A, B) {
+  if (!ocean) return null;
+  const key = `T${A.lat.toFixed(2)},${A.lon.toFixed(2)}|${B.lat.toFixed(2)},${B.lon.toFixed(2)}`;
   if (cache.has(key)) return cache.get(key);
   const s = landCell(A.lat, A.lon), t = landCell(B.lat, B.lon);
   let res = null;
-  if (s >= 0 && t >= 0 && comp[s] === comp[t]) {
-    const p = s === t ? [s] : astar(s, t, land, maxKm / KM);
-    if (p) {
-      let km = 0; for (let i = 1; i < p.length; i++) { const a = p[i - 1], b = p[i], ax = a % W, bx = b % W, ay = (a - ax) / W, by = (b - bx) / W; let dx = Math.abs(bx - ax); dx = Math.min(dx, W - dx); km += Math.hypot(dx * Math.cos((90 - (ay + by) / 2 / RES) * Math.PI / 180), by - ay) * KM; }
-      if (km <= maxKm) {
-        const ll = [[A.lat, A.lon], ...pull(p, land).map(i => { const x = i % W; return toLL(x, (i - x) / W); }), [B.lat, B.lon]];
-        for (let i = 1; i < ll.length; i++) { const d = ll[i][1] - ll[i - 1][1]; if (d > 180) ll[i][1] -= 360; else if (d < -180) ll[i][1] += 360; }
-        res = { land: densify(smooth(ll, 2, land)), km };
-      }
-    }
+  const p = s >= 0 && t >= 0 ? (s === t ? [s] : astar(s, t, null)) : null;
+  if (p) {
+    // podział na odcinki lądowe i morskie; sąsiednie odcinki dzielą punkt styku (port)
+    const runs = []; let cur = [p[0]];
+    for (let k = 1; k < p.length; k++) { if (!!land[p[k]] !== !!land[p[k - 1]]) { runs.push(cur); cur = [p[k - 1]]; } cur.push(p[k]); }
+    runs.push(cur);
+    const segs = runs.map(r => { const mode = land[r[r.length - 1]] ? 'land' : 'sea', mask = mode === 'sea' ? ocean : land;
+      const ll = pull(r, mask).map(i => { const x = i % W; return toLL(x, (i - x) / W); });
+      return { mode, pts: ll, mask }; });
+    segs[0].pts[0] = [A.lat, A.lon]; segs[segs.length - 1].pts.push([B.lat, B.lon]);
+    let last = null;   // ciągłość długości geograficznej przez 180°
+    segs.forEach(sg => { sg.pts.forEach(q => { if (last) q[1] += 360 * Math.round((last[1] - q[1]) / 360); last = q; }); sg.pts = densify(smooth(sg.pts, 2, sg.mask)); delete sg.mask; });
+    const tiny = sg => sg.pts.every(q => Math.abs(q[0] - sg.pts[0][0]) + Math.abs(q[1] - sg.pts[0][1]) < 0.15);   // np. stolica nad samym morzem
+    const kept = segs.filter((sg, k) => !(tiny(sg) && segs.length > 1 && (k === 0 || k === segs.length - 1)));
+    if (kept.length < segs.length) { kept[0].pts.unshift([A.lat, A.lon]); kept[kept.length - 1].pts.push([B.lat, B.lon]); }
+    res = { segs: kept };
   }
   cache.set(key, res); return res;
 }
-// długość trasy [[lat,lon]…] w km
-export const pathKm = pts => { let k = 0; for (let i = 1; i < pts.length; i++) { const [a, b] = [pts[i - 1], pts[i]]; k += Math.hypot((b[1] - a[1]) * Math.cos((a[0] + b[0]) / 2 * Math.PI / 180), b[0] - a[0]) * 111.32; } return k; };
 
 // punkt na lądzie → najbliższe miejsce na otwartym morzu (okręt staje przy brzegu, nie wpływa w ląd)
 export function snap(p) {

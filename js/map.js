@@ -280,20 +280,16 @@ export function render() {
   // linie traktatów i wojen
   const cap = id => country(id)?.capital;
   const line = (a, b, style, tip) => { if (!showPair(a, b)) return; const A = cap(a), B = cap(b); if (!A || !B) return; L.polyline(G.gcLine([A, B], 32), { pane: 'lines', ...style }).bindTooltip(tip, { sticky: true }).addTo(groups.lines); };
-  // szlak handlowy: stolica → port (przerywana) → trasa po morzu → port → stolica
+  // szlak handlowy: najkrótsza trasa mieszana — po lądzie (kreski) i po morzu (ciągła), z przeładunkiem w portach
   const seaLine = (a, b, secret, tip) => {
     if (!showPair(a, b)) return;
     const A = cap(a), B = cap(b); if (!A || !B) return;
-    const r = SR.seaRoute(A, B);
-    // sąsiedzi / ten sam kontynent: jeśli po lądzie jest bliżej niż morzem, szlak idzie drogą lądową
-    const seaKm = r ? SR.pathKm([[A.lat, A.lon], r.from, ...r.sea, r.to, [B.lat, B.lon]]) : Infinity;
-    const l = SR.landRoute(A, B, seaKm);
-    if (l) { const g = L.featureGroup().bindTooltip(tip + ' · 🚚 szlak lądowy', { sticky: true }).addTo(groups.lines); [-360, 0, 360].forEach(o => L.polyline(o ? l.land.map(([la, lo]) => [la, lo + o]) : l.land, { pane: 'lines', color: '#f5b301', weight: 2, opacity: 0.8, dashArray: secret ? '2 6' : '9 5', lineJoin: 'round' }).addTo(g)); return; }
+    const r = SR.tradeRoute(A, B);
     if (!r) return line(a, b, { color: '#f5b301', weight: 1.5, opacity: 0.7, dashArray: '2 6' }, tip);
-    const g = L.featureGroup().bindTooltip(tip + ' · ⚓ szlak morski', { sticky: true }).addTo(groups.lines);
+    const modes = [...new Set(r.segs.map(s => s.mode))].map(m => m === 'sea' ? '⚓ morze' : '🚚 ląd').join(' + ');
+    const g = L.featureGroup().bindTooltip(`${tip} · ${modes}`, { sticky: true }).addTo(groups.lines);
     // trasa przez Pacyfik wychodzi poza ±180°, więc rysujemy też kopie przesunięte o 360°
-    [-360, 0, 360].forEach(o => L.polyline(o ? r.sea.map(([la, lo]) => [la, lo + o]) : r.sea, { pane: 'lines', color: '#f5b301', weight: 2, opacity: 0.8, dashArray: secret ? '2 6' : null, lineJoin: 'round' }).addTo(g));
-    [[[A.lat, A.lon], r.from], [r.to, [B.lat, B.lon + 360 * Math.round((r.to[1] - B.lon) / 360)]]].forEach(seg => L.polyline(seg, { pane: 'lines', color: '#f5b301', weight: 1, opacity: 0.5, dashArray: '1 5' }).addTo(g));
+    r.segs.forEach(sg => [-360, 0, 360].forEach(o => L.polyline(o ? sg.pts.map(([la, lo]) => [la, lo + o]) : sg.pts, { pane: 'lines', color: '#f5b301', weight: 2, opacity: 0.8, dashArray: secret ? '2 6' : sg.mode === 'land' ? '9 5' : null, lineJoin: 'round' }).addTo(g)));
   };
   Object.values(S.data.treaties).forEach(tr => {
     if (tr.status === 'ended' || tr.status === 'proposed') return;
