@@ -1,7 +1,7 @@
 // Morskie szlaki: trasa po wodzie (A* na siatce 0,25°) zamiast prostej linii między stolicami.
 // Maska lądu rysowana raz z konturów państw; kanały i wąskie cieśniny są „przekopane” ręcznie.
 const RES = 4, W = 360 * RES, H = 180 * RES;           // siatka 0,25° (1440 × 720): widać wyspy duńskie i cieśniny
-let land = null, ocean = null, coast = null, owner = null;
+let land = null, ocean = null, coast = null, owner = null, comp = null;
 const cache = new Map(), portCache = new Map(), pathCache = new Map();
 
 // cieśniny zbyt wąskie dla siatki: [lon, lat] od → do (bez Kanału Kilońskiego — duże okręty opływają Danię)
@@ -46,6 +46,10 @@ export function init(fc) {
   // ocean światowy = woda połączona z punktem na środku Atlantyku (bez Morza Kaspijskiego i jezior)
   ocean = new Uint8Array(W * H); const q = [idx(...toXY(0, -30))]; ocean[q[0]] = 1;
   while (q.length) { const i = q.pop(), x = i % W, y = (i - x) / W; for (const [dx, dy] of N4) { const ny = y + dy; if (ny < 0 || ny >= H) continue; const j = idx(x + dx, ny); if (!land[j] && !ocean[j]) { ocean[j] = 1; q.push(j); } } }
+  // spójne kawałki lądu (kontynenty, wyspy): trasa lądowa między różnymi kawałkami nie istnieje
+  comp = new Int32Array(W * H); let nc = 0;
+  for (let i0 = 0; i0 < W * H; i0++) { if (!land[i0] || comp[i0]) continue; comp[i0] = ++nc; const st = [i0];
+    while (st.length) { const i = st.pop(), x = i % W, y = (i - x) / W; for (const [dx, dy] of N4) { const ny = y + dy; if (ny < 0 || ny >= H) continue; const j = idx(x + dx, ny); if (land[j] && !comp[j]) { comp[j] = nc; st.push(j); } } } }
   cache.clear(); portCache.clear(); pathCache.clear();
 }
 
@@ -75,9 +79,10 @@ function port(lat, lon) {
 }
 
 // A* po wodzie; koszt ~ odległość, przy brzegu i w lodach drożej (trasy trzymają się otwartego morza, omijają Arktykę)
-function astar(s, t) {
+function astar(s, t, pass = ocean, maxCost = Infinity) {
+  const sea = pass === ocean;
   const cosT = new Float32Array(H); for (let y = 0; y < H; y++) cosT[y] = Math.max(0.05, Math.cos((90 - (y + 0.5) / RES) * Math.PI / 180));
-  const tx = t % W, ty = (t - tx) / W, EPS = 0.35;   // słaba heurystyka: przy biegunach ruch w długości jest „tani”, mocniejsza psuje wyszukiwanie
+  const tx = t % W, ty = (t - tx) / W, EPS = sea ? 0.35 : 0.9;   // słaba heurystyka: przy biegunach ruch w długości jest „tani”, mocniejsza psuje wyszukiwanie
   const hf = i => { const x = i % W, y = (i - x) / W; let dx = Math.abs(x - tx); dx = Math.min(dx, W - dx); return Math.hypot(dx * cosT[Math.round((y + ty) / 2)], y - ty); };
   const gS = new Float32Array(W * H).fill(Infinity), from = new Int32Array(W * H).fill(-1);
   // kopiec na zwykłych tablicach liczb (szybszy niż tablica par)
@@ -88,14 +93,14 @@ function astar(s, t) {
   const done = new Uint8Array(W * H);
   let steps = 0;
   while (K.length && steps++ < 4000000) {
-    const i = pop(); if (done[i]) continue; done[i] = 1; if (i === t) break;
+    const i = pop(); if (done[i]) continue; done[i] = 1; if (i === t) break; if (gS[i] > maxCost) break;
     const x = i % W, y = (i - x) / W, gi = gS[i];
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       if (!dx && !dy) continue; const ny = y + dy; if (ny < 0 || ny >= H) continue;
-      const j = idx(x + dx, ny); if (!ocean[j] || done[j]) continue;
-      if (dx && dy && !ocean[idx(x + dx, y)] && !ocean[idx(x, ny)]) continue;   // bez „przeciskania się” po skosie między lądem
+      const j = idx(x + dx, ny); if (!pass[j] || done[j]) continue;
+      if (dx && dy && !pass[idx(x + dx, y)] && !pass[idx(x, ny)]) continue;   // bez „przeciskania się” po skosie między lądem
       const lat = 90 - (ny + 0.5) / RES;
-      const c = Math.hypot(dx * cosT[ny], dy) * (coast[j] ? 2.2 : 1) * (Math.abs(lat) > 64 ? 5 : 1);
+      const c = Math.hypot(dx * cosT[ny], dy) * (sea && coast[j] ? 2.2 : 1) * (sea && Math.abs(lat) > 64 ? 5 : 1);
       if (gi + c < gS[j]) { gS[j] = gi + c; from[j] = i; push(gS[j] + EPS * hf(j), j); }
     }
   }
@@ -105,22 +110,22 @@ function astar(s, t) {
 }
 
 // „naciąganie sznurka”: zostają tylko punkty zwrotne, między którymi widać otwarte morze
-function visible(a, b) {
+function visible(a, b, pass = ocean) {
   const ax = a % W, ay = (a - ax) / W, bx = b % W, by = (b - bx) / W;
   let dx = bx - ax; if (dx > W / 2) dx -= W; if (dx < -W / 2) dx += W;
   const n = Math.max(Math.abs(dx), Math.abs(by - ay)) * 2 || 1;
-  for (let k = 1; k < n; k++) { const j = idx(Math.round(ax + dx * k / n), Math.round(ay + (by - ay) * k / n)); if (!ocean[j] || coast[j] && k > 2 && k < n - 2) return false; }
+  for (let k = 1; k < n; k++) { const j = idx(Math.round(ax + dx * k / n), Math.round(ay + (by - ay) * k / n)); if (!pass[j] || pass === ocean && coast[j] && k > 2 && k < n - 2) return false; }
   return true;
 }
-function pull(path) {
+function pull(path, pass = ocean) {
   const out = [path[0]]; let a = 0;
-  while (a < path.length - 1) { let b = Math.min(path.length - 1, a + 120); while (b > a + 1 && !visible(path[a], path[b])) b--; out.push(path[b]); a = b; }
+  while (a < path.length - 1) { let b = Math.min(path.length - 1, a + 120); while (b > a + 1 && !visible(path[a], path[b], pass)) b--; out.push(path[b]); a = b; }
   return out;
 }
 // wygładzenie Chaikina: łagodne łuki zamiast ostrych załamań
 // wygładzenie: narożnik ścinany najwyżej o ~0,3° i tylko wtedy, gdy ścięty punkt dalej leży na morzu
-const wet = (lat, lon) => !!ocean[idx(...toXY(lat, lon))];
-function smooth(pts, n = 2) {
+function smooth(pts, n = 2, pass = ocean) {
+  const wet = (lat, lon) => !!pass[idx(...toXY(lat, lon))];
   for (let r = 0; r < n; r++) {
     const o = [pts[0]];
     for (let i = 1; i < pts.length - 1; i++) {
@@ -157,6 +162,31 @@ export function seaRoute(A, B) {
   }
   cache.set(key, res); return res;
 }
+
+// trasa lądowa (A* po lądzie, bez przepraw przez morze); null gdy dłuższa niż maxKm albo brak połączenia
+const KM = 111.32 / RES;   // jedna komórka siatki (≈ 27,8 km przy równiku)
+const landCell = (lat, lon) => { const [x, y] = toXY(lat, lon); for (let r = 0; r <= 3; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) { const j = idx(x + dx, Math.min(H - 1, Math.max(0, y + dy))); if (land[j]) return j; } return -1; };
+export function landRoute(A, B, maxKm = Infinity) {
+  if (!land) return null;
+  const key = `L${A.lat.toFixed(2)},${A.lon.toFixed(2)}|${B.lat.toFixed(2)},${B.lon.toFixed(2)}|${Math.round(maxKm)}`;
+  if (cache.has(key)) return cache.get(key);
+  const s = landCell(A.lat, A.lon), t = landCell(B.lat, B.lon);
+  let res = null;
+  if (s >= 0 && t >= 0 && comp[s] === comp[t]) {
+    const p = s === t ? [s] : astar(s, t, land, maxKm / KM);
+    if (p) {
+      let km = 0; for (let i = 1; i < p.length; i++) { const a = p[i - 1], b = p[i], ax = a % W, bx = b % W, ay = (a - ax) / W, by = (b - bx) / W; let dx = Math.abs(bx - ax); dx = Math.min(dx, W - dx); km += Math.hypot(dx * Math.cos((90 - (ay + by) / 2 / RES) * Math.PI / 180), by - ay) * KM; }
+      if (km <= maxKm) {
+        const ll = [[A.lat, A.lon], ...pull(p, land).map(i => { const x = i % W; return toLL(x, (i - x) / W); }), [B.lat, B.lon]];
+        for (let i = 1; i < ll.length; i++) { const d = ll[i][1] - ll[i - 1][1]; if (d > 180) ll[i][1] -= 360; else if (d < -180) ll[i][1] += 360; }
+        res = { land: densify(smooth(ll, 2, land)), km };
+      }
+    }
+  }
+  cache.set(key, res); return res;
+}
+// długość trasy [[lat,lon]…] w km
+export const pathKm = pts => { let k = 0; for (let i = 1; i < pts.length; i++) { const [a, b] = [pts[i - 1], pts[i]]; k += Math.hypot((b[1] - a[1]) * Math.cos((a[0] + b[0]) / 2 * Math.PI / 180), b[0] - a[0]) * 111.32; } return k; };
 
 // punkt na lądzie → najbliższe miejsce na otwartym morzu (okręt staje przy brzegu, nie wpływa w ląd)
 export function snap(p) {
